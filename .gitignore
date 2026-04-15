@@ -36,6 +36,41 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local assistant/editor metadata
+/.adal/
+/.agents/
+/.augment/
+/.bob/
+/.claude/
+/.codebuddy/
+/.commandcode/
+/.continue/
+/.cortex/
+/.crush/
+/.factory/
+/.goose/
+/.iflow/
+/.junie/
+/.kilocode/
+/.kiro/
+/.kode/
+/.mcpjam/
+/.mux/
+/.neovate/
+/.openhands/
+/.pi/
+/.pochi/
+/.qoder/
+/.qwen/
+/.roo/
+/.trae/
+/.vibe/
+/.windsurf/
+/.zencoder/
+/skills/
+/skills-lock.json
+/CLAUDE.md
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

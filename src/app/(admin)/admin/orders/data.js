@@ -49,7 +49,7 @@ export const orders = [
     deliveryMethod: "Store Pickup",
     status: "Confirme",
     totalPrice: 14600,
-    owner: "Warad",
+    owner: "Warda",
   },
   {
     id: "5",

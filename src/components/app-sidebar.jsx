@@ -36,7 +36,7 @@ const data = {
         },
         {
           title: "Suivre les commandes",
-          url: "/admin/products",
+          url: "/admin/tracking",
           icon: (
             <Truck />
           ),
@@ -48,14 +48,14 @@ const data = {
       items:[
         {
           title: "Produits",
-          url:"/productsOverview",
+          url:"/admin/products",
           icon:(
             <Package/>
           )
         },
         {
           title:'Catégories',
-          url:'/categoriesOverview',
+          url:'/admin/categories',
           icon:(
             <Layers/>
           )
@@ -75,7 +75,7 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:p-1.5!">
               <a href="/admin" className="mb-5">
-                <Image src={logo} width={50} height={50}/>
+                <Image src={logo} alt="CAFTAN logo" width={50} height={50}/>
                 <span className="text-base">Admin</span>
               </a>
             </SidebarMenuButton>

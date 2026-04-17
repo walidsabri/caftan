@@ -40,6 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SHOP_OWNERS } from "@/app/(admin)/admin/shared/shop-owners";
 
 const EMPTY_CUSTOMER = {
   name: "",
@@ -81,8 +82,6 @@ const DELIVERY_OPTIONS = [
     icon: House,
   },
 ];
-
-const ASSIGNEE_OPTIONS = ["Warda", "Hanane", "Amina"];
 
 const wilayaIndex = algeriaCities.reduce((accumulator, city) => {
   const wilayaName = city.wilaya_name_ascii;
@@ -517,7 +516,7 @@ export default function NewOrder() {
                 position="popper"
                 sideOffset={6}
                 className={adminDialogSelectContentClass}>
-                {ASSIGNEE_OPTIONS.map((assignee) => (
+                {SHOP_OWNERS.map((assignee) => (
                   <SelectItem
                     key={assignee}
                     value={assignee}

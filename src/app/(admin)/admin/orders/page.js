@@ -29,6 +29,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { SHOP_OWNERS } from "@/app/(admin)/admin/shared/shop-owners";
 
 import { orders } from "./data";
 
@@ -229,12 +230,11 @@ export default function Orders() {
               <SelectItem className={selectItemClass} value="all">
                 Selectionner un compte
               </SelectItem>
-              <SelectItem className={selectItemClass} value="Warda">
-                Warda
-              </SelectItem>
-              <SelectItem className={selectItemClass} value="Hanane">
-                Hanane
-              </SelectItem>
+              {SHOP_OWNERS.map((owner) => (
+                <SelectItem key={owner} className={selectItemClass} value={owner}>
+                  {owner}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <button
@@ -378,20 +378,16 @@ export default function Orders() {
                 side="bottom"
                 sideOffset={6}
                 className={simpleDropdownClass}>
-                <SelectItem className={selectItemClass} value="all">
-                  All assignees
+              <SelectItem className={selectItemClass} value="all">
+                All assignees
+              </SelectItem>
+              {SHOP_OWNERS.map((owner) => (
+                <SelectItem key={owner} className={selectItemClass} value={owner}>
+                  {owner}
                 </SelectItem>
-                <SelectItem className={selectItemClass} value="Warad">
-                  Warda
-                </SelectItem>
-                <SelectItem className={selectItemClass} value="Hanane">
-                  Hanane
-                </SelectItem>
-                <SelectItem className={selectItemClass} value="Amina">
-                  Amina
-                </SelectItem>
-              </SelectContent>
-            </Select>
+              ))}
+            </SelectContent>
+          </Select>
 
             <Select
               value={selectedDeliveryType}

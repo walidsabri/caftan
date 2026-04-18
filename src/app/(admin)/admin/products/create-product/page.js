@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   Hash,
   ChevronLeft,
@@ -113,6 +114,7 @@ function createSizeRow(defaultSize = "") {
 
 export default function CreateProductPage() {
   const supabase = React.useMemo(() => createClient(), []);
+  const router = useRouter();
 
   const [title, setTitle] = React.useState("");
   const [category, setCategory] = React.useState("");
@@ -594,6 +596,7 @@ export default function CreateProductPage() {
       }
 
       setSubmitSuccess("Produit cree avec succes.");
+      router.replace("/admin/products");
     } catch (error) {
       setSubmitError(
         error instanceof Error ? error.message : "Product creation failed.",

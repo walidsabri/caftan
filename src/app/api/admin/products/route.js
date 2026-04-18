@@ -179,15 +179,18 @@ export async function POST(request) {
   try {
     const supabase = await createClient();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+    const isDevelopment = process.env.NODE_ENV === "development";
 
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    if (!isDevelopment) {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+      }
     }
-
     const body = await request.json();
     const validation = validatePayload(body);
 

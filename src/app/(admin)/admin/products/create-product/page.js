@@ -112,6 +112,8 @@ function createSizeRow(defaultSize = "") {
 export default function CreateProductPage() {
   const [title, setTitle] = React.useState("");
   const [category, setCategory] = React.useState("");
+  const [price, setPrice] = React.useState("");
+  const [oldPrice, setOldPrice] = React.useState("");
   const [quantity, setQuantity] = React.useState("");
   const [colorInput, setColorInput] = React.useState("");
   const [colors, setColors] = React.useState([]);
@@ -119,6 +121,8 @@ export default function CreateProductPage() {
   const [mediaByColor, setMediaByColor] = React.useState({});
   const [validationFeedback, setValidationFeedback] = React.useState(null);
   const mediaByColorRef = React.useRef(mediaByColor);
+  const priceValue = parseCount(price);
+  const oldPriceValue = parseCount(oldPrice);
   const totalQuantityValue = parseCount(quantity);
   const stockEntries = colors.flatMap((color) =>
     (stockByColor[color] ?? []).map((sizeRow) => ({
@@ -175,7 +179,7 @@ export default function CreateProductPage() {
 
   React.useEffect(() => {
     setValidationFeedback(null);
-  }, [title, category, quantity, colors, stockByColor]);
+  }, [title, category, price, oldPrice, quantity, colors, stockByColor]);
 
   React.useEffect(() => {
     return () => {
@@ -316,6 +320,18 @@ export default function CreateProductPage() {
 
     if (!category) {
       errors.push("Selectionnez une categorie.");
+    }
+
+    if (priceValue <= 0) {
+      errors.push("Entrez un prix superieur a 0.");
+    }
+
+    if (oldPrice && oldPriceValue <= 0) {
+      errors.push("L'ancien prix doit etre superieur a 0.");
+    }
+
+    if (oldPriceValue > 0 && oldPriceValue <= priceValue) {
+      errors.push("L'ancien prix doit etre superieur au prix actuel pour afficher une promotion.");
     }
 
     if (!hasDefinedTotalQuantity || totalQuantityValue <= 0) {
@@ -461,6 +477,64 @@ export default function CreateProductPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-5 rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_2px_10px_rgba(15,23,42,0.05)] sm:p-5">
+          <div className="flex items-center gap-2 text-lg font-semibold text-[#081c16]">
+            <Package size={18} color="#081c16" strokeWidth={2.4} />
+            Prix et promotion
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="flex flex-col gap-3 self-start">
+              <Label htmlFor="product-price" className={adminLabelClass}>
+                Prix
+              </Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="product-price"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={price}
+                  onChange={(event) =>
+                    setPrice(sanitizeCountInput(event.target.value))
+                  }
+                  placeholder="Ex: 18500"
+                  className={adminInputClass}
+                />
+                <span className="shrink-0 text-sm font-medium text-slate-500">
+                  DA
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 self-start">
+              <Label htmlFor="product-old-price" className={adminLabelClass}>
+                Ancien prix
+              </Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="product-old-price"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={oldPrice}
+                  onChange={(event) =>
+                    setOldPrice(sanitizeCountInput(event.target.value))
+                  }
+                  placeholder="Ex: 22000"
+                  className={adminInputClass}
+                />
+                <span className="shrink-0 text-sm font-medium text-slate-500">
+                  DA
+                </span>
+              </div>
+              <p className="text-xs leading-5 text-slate-500">
+                Laissez ce champ vide si le produit n&apos;est pas en promotion.
+              </p>
             </div>
           </div>
         </div>

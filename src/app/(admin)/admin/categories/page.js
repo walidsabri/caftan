@@ -3,7 +3,7 @@
 import * as React from "react";
 import { EllipsisVerticalIcon, Plus } from "lucide-react";
 
-import { createClient } from "@/lib/client";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -92,11 +92,9 @@ function formatCreatedAt(value) {
 }
 
 function getStatusClassName(isActive) {
-  if (isActive) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-
-  return "border-slate-200 bg-slate-100 text-slate-500";
+  return isActive
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : "border-slate-200 bg-slate-100 text-slate-500";
 }
 
 function mapCategoryRow(row) {
@@ -116,6 +114,7 @@ export default function CategoriesPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [pageError, setPageError] = React.useState("");
+  const [pageSuccess, setPageSuccess] = React.useState("");
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [editingCategoryId, setEditingCategoryId] = React.useState(null);
   const [draftCategory, setDraftCategory] = React.useState(createEmptyDraft);
@@ -185,6 +184,7 @@ export default function CategoriesPage() {
 
   async function handleDeleteCategory(categoryId) {
     setPageError("");
+    setPageSuccess("");
 
     const { error } = await supabase
       .from("categories")
@@ -192,17 +192,23 @@ export default function CategoriesPage() {
       .eq("id", categoryId);
 
     if (error) {
-      setPageError(error.message);
+      setPageError(
+        error.message.includes("violates foreign key constraint")
+          ? "Impossible de supprimer cette categorie car elle est deja utilisee par des produits."
+          : error.message,
+      );
       return;
     }
 
     setCategories((currentCategories) =>
       currentCategories.filter((category) => category.id !== categoryId),
     );
+    setPageSuccess("Categorie supprimee avec succes.");
   }
 
   async function handleToggleActive(categoryId) {
     setPageError("");
+    setPageSuccess("");
 
     const target = categories.find((category) => category.id === categoryId);
     if (!target) return;
@@ -226,13 +232,18 @@ export default function CategoriesPage() {
         category.id === categoryId ? mapCategoryRow(data) : category,
       ),
     );
+
+    setPageSuccess("Statut de la categorie mis a jour.");
   }
 
   async function handleSubmitCategory(event) {
     event.preventDefault();
 
     const trimmedName = draftCategory.name.trim();
-    if (!trimmedName) return;
+    if (!trimmedName) {
+      setPageError("Le nom de la categorie est obligatoire.");
+      return;
+    }
 
     const nextDescription = draftCategory.description.trim();
     const nextSlug = createUniqueSlug(
@@ -243,6 +254,7 @@ export default function CategoriesPage() {
 
     setIsSaving(true);
     setPageError("");
+    setPageSuccess("");
 
     if (editingCategoryId) {
       const { data, error } = await supabase
@@ -267,6 +279,8 @@ export default function CategoriesPage() {
           category.id === editingCategoryId ? mapCategoryRow(data) : category,
         ),
       );
+
+      setPageSuccess("Categorie mise a jour avec succes.");
     } else {
       const { data, error } = await supabase
         .from("categories")
@@ -289,6 +303,7 @@ export default function CategoriesPage() {
         mapCategoryRow(data),
         ...currentCategories,
       ]);
+      setPageSuccess("Categorie creee avec succes.");
     }
 
     setIsSaving(false);
@@ -320,6 +335,12 @@ export default function CategoriesPage() {
         {pageError ? (
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {pageError}
+          </div>
+        ) : null}
+
+        {pageSuccess ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {pageSuccess}
           </div>
         ) : null}
 

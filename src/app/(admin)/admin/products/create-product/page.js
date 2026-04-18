@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 
-import { products } from "@/app/(admin)/admin/products/data";
+import { createClient } from "@/lib/supabase/client";
 import { SHOP_OWNERS } from "@/app/(admin)/admin/shared/shop-owners";
 import { CompactStockColorCard } from "@/app/(admin)/admin/products/create-product/compact-stock-color-card";
 import { Button } from "@/components/ui/button";
@@ -39,11 +39,13 @@ const adminSelectContentClass =
   "rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm";
 const adminSelectItemClass =
   "cursor-pointer rounded-lg px-3 py-2.5 text-sm text-[#081c16] focus:bg-slate-50 focus:text-[#081c16]";
+
 const ownerBadgeClassByName = {
   Hanane: "border-rose-200 bg-rose-50 text-rose-700",
   Warda: "border-amber-200 bg-amber-50 text-amber-700",
   Amina: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
+
 const commonSizeOptions = [
   "32",
   "34",
@@ -64,13 +66,11 @@ const commonSizeOptions = [
   "Unique",
 ];
 
-const categoryOptions = [
-  ...new Set(products.map((product) => product.category)),
-];
-
 function revokeMediaItems(mediaItems = []) {
   mediaItems.forEach((mediaItem) => {
-    URL.revokeObjectURL(mediaItem.previewUrl);
+    if (mediaItem?.previewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(mediaItem.previewUrl);
+    }
   });
 }
 
@@ -112,6 +112,8 @@ function createSizeRow(defaultSize = "") {
 }
 
 export default function CreateProductPage() {
+  const supabase = React.useMemo(() => createClient(), []);
+
   const [title, setTitle] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [price, setPrice] = React.useState("");
@@ -122,20 +124,36 @@ export default function CreateProductPage() {
   const [stockByColor, setStockByColor] = React.useState({});
   const [mediaByColor, setMediaByColor] = React.useState({});
   const [validationFeedback, setValidationFeedback] = React.useState(null);
+
+  const [categoryOptions, setCategoryOptions] = React.useState([]);
+  const [categoriesLoading, setCategoriesLoading] = React.useState(true);
+  const [categoriesError, setCategoriesError] = React.useState("");
+
+  const [uploadingColors, setUploadingColors] = React.useState({});
+  const [mediaError, setMediaError] = React.useState("");
+
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState("");
+  const [submitSuccess, setSubmitSuccess] = React.useState("");
+
   const mediaByColorRef = React.useRef(mediaByColor);
+
   const priceValue = parseCount(price);
   const oldPriceValue = parseCount(oldPrice);
   const totalQuantityValue = parseCount(quantity);
+
   const stockEntries = colors.flatMap((color) =>
     (stockByColor[color] ?? []).map((sizeRow) => ({
       color,
       ...sizeRow,
     })),
   );
+
   const totalDetailedQuantity = stockEntries.reduce(
     (sum, entry) => sum + parseCount(entry.quantity),
     0,
   );
+
   const totalAllocatedQuantity = stockEntries.reduce(
     (sum, entry) =>
       sum +
@@ -145,9 +163,9 @@ export default function CreateProductPage() {
       ),
     0,
   );
-  const quantityDifference = totalQuantityValue - totalDetailedQuantity;
-  const allocationDifference = totalDetailedQuantity - totalAllocatedQuantity;
+
   const hasDefinedTotalQuantity = quantity !== "";
+
   const ownerSummaries = SHOP_OWNERS.map((owner) => {
     const items = stockEntries
       .map((entry) => ({
@@ -179,6 +197,8 @@ export default function CreateProductPage() {
 
   React.useEffect(() => {
     setValidationFeedback(null);
+    setSubmitError("");
+    setSubmitSuccess("");
   }, [title, category, price, oldPrice, quantity, colors, stockByColor]);
 
   React.useEffect(() => {
@@ -186,6 +206,30 @@ export default function CreateProductPage() {
       Object.values(mediaByColorRef.current).forEach(revokeMediaItems);
     };
   }, []);
+
+  React.useEffect(() => {
+    async function fetchCategories() {
+      setCategoriesLoading(true);
+      setCategoriesError("");
+
+      const { data, error } = await supabase
+        .from("categories")
+        .select("id, name, slug, is_active")
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+
+      if (error) {
+        setCategoriesError(error.message);
+        setCategoriesLoading(false);
+        return;
+      }
+
+      setCategoryOptions(data || []);
+      setCategoriesLoading(false);
+    }
+
+    fetchCategories();
+  }, [supabase]);
 
   function handleAddColor() {
     const normalizedColor = colorInput.trim();
@@ -210,11 +254,13 @@ export default function CreateProductPage() {
     setColors((currentColors) =>
       currentColors.filter((color) => color !== colorToRemove),
     );
+
     setStockByColor((currentStockByColor) => {
       const nextStockByColor = { ...currentStockByColor };
       delete nextStockByColor[colorToRemove];
       return nextStockByColor;
     });
+
     setMediaByColor((currentMediaByColor) => {
       revokeMediaItems(currentMediaByColor[colorToRemove]);
       const nextMediaByColor = { ...currentMediaByColor };
@@ -232,25 +278,90 @@ export default function CreateProductPage() {
     handleAddColor();
   }
 
-  function handleMediaChange(color, event) {
-    const selectedFiles = Array.from(event.target.files ?? []).map((file) => ({
+  async function handleMediaChange(color, event) {
+    const selectedFiles = Array.from(event.target.files ?? []);
+
+    if (!selectedFiles.length) {
+      return;
+    }
+
+    setMediaError("");
+    setUploadingColors((current) => ({
+      ...current,
+      [color]: true,
+    }));
+
+    const previewItems = selectedFiles.map((file) => ({
       id: `${file.name}-${file.lastModified}`,
       name: file.name,
       previewUrl: URL.createObjectURL(file),
+      url: "",
+      publicId: "",
+      isUploading: true,
     }));
 
     setMediaByColor((currentMediaByColor) => {
       revokeMediaItems(currentMediaByColor[color]);
       return {
         ...currentMediaByColor,
-        [color]: selectedFiles,
+        [color]: previewItems,
       };
     });
 
-    event.target.value = "";
+    try {
+      const formData = new FormData();
+
+      selectedFiles.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      const response = await fetch("/api/upload/cloudinary", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.error || "Upload failed.");
+      }
+
+      const uploadedFiles = result.files || [];
+
+      setMediaByColor((currentMediaByColor) => ({
+        ...currentMediaByColor,
+        [color]: uploadedFiles.map((file, index) => ({
+          id: `${file.publicId}-${index}`,
+          name: file.name,
+          previewUrl: file.url,
+          url: file.url,
+          publicId: file.publicId,
+          isUploading: false,
+        })),
+      }));
+    } catch (error) {
+      setMediaError(error instanceof Error ? error.message : "Upload failed.");
+
+      setMediaByColor((currentMediaByColor) => {
+        revokeMediaItems(currentMediaByColor[color]);
+        return {
+          ...currentMediaByColor,
+          [color]: [],
+        };
+      });
+    } finally {
+      setUploadingColors((current) => ({
+        ...current,
+        [color]: false,
+      }));
+
+      event.target.value = "";
+    }
   }
 
   function handleCancelUpload(color) {
+    setMediaError("");
+
     setMediaByColor((currentMediaByColor) => {
       revokeMediaItems(currentMediaByColor[color]);
       return {
@@ -359,6 +470,7 @@ export default function CreateProductPage() {
           (sum, owner) => sum + parseCount(sizeRow.owners[owner]),
           0,
         );
+
         const rowLabel = sizeRow.size.trim()
           ? `${color} / ${sizeRow.size.trim()}`
           : `${color} / ligne ${index + 1}`;
@@ -374,11 +486,15 @@ export default function CreateProductPage() {
 
         if (rowOwnerTotal > rowQuantity) {
           errors.push(
-            `${rowLabel}: la repartition proprietaire depasse la quantite de ${rowOwnerTotal - rowQuantity}.`,
+            `${rowLabel}: la repartition proprietaire depasse la quantite de ${
+              rowOwnerTotal - rowQuantity
+            }.`,
           );
         } else if (rowOwnerTotal < rowQuantity) {
           errors.push(
-            `${rowLabel}: il manque ${rowQuantity - rowOwnerTotal} piece(s) dans la repartition proprietaire.`,
+            `${rowLabel}: il manque ${
+              rowQuantity - rowOwnerTotal
+            } piece(s) dans la repartition proprietaire.`,
           );
         }
       });
@@ -393,7 +509,9 @@ export default function CreateProductPage() {
       totalDetailedQuantity < totalQuantityValue
     ) {
       errors.push(
-        `Il manque ${totalQuantityValue - totalDetailedQuantity} piece(s) pour atteindre la quantite totale (${totalQuantityValue}).`,
+        `Il manque ${
+          totalQuantityValue - totalDetailedQuantity
+        } piece(s) pour atteindre la quantite totale (${totalQuantityValue}).`,
       );
     }
 
@@ -419,6 +537,70 @@ export default function CreateProductPage() {
         "Le total, les tailles et la repartition des proprietaires sont coherents. Le produit est pret a etre enregistre.",
       ],
     });
+  }
+
+  async function handleCreateProduct() {
+    setSubmitError("");
+    setSubmitSuccess("");
+
+    const errors = validateProductDraft();
+
+    if (errors.length) {
+      setValidationFeedback({
+        type: "error",
+        title: "Le produit ne peut pas etre valide pour le stock.",
+        messages: errors,
+      });
+      return;
+    }
+
+    const hasUploadingImages = Object.values(uploadingColors).some(Boolean);
+
+    if (hasUploadingImages) {
+      setSubmitError(
+        "Attendez la fin de l'upload des images avant d'enregistrer.",
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/admin/products", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title,
+          categoryId: category,
+          price,
+          oldPrice,
+          quantity,
+          colors,
+          stockByColor,
+          mediaByColor,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result?.details?.join(" | ") ||
+            result?.error ||
+            "Product creation failed.",
+        );
+      }
+
+      setSubmitSuccess("Produit cree avec succes.");
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : "Product creation failed.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -460,26 +642,40 @@ export default function CreateProductPage() {
               <Label htmlFor="product-category" className={adminLabelClass}>
                 Categorie
               </Label>
+
               <Select value={category} onValueChange={setCategory}>
                 <SelectTrigger
                   id="product-category"
                   className={adminSelectTriggerClass}>
-                  <SelectValue placeholder="Selectionner une categorie" />
+                  <SelectValue
+                    placeholder={
+                      categoriesLoading
+                        ? "Chargement des categories..."
+                        : "Selectionner une categorie"
+                    }
+                  />
                 </SelectTrigger>
+
                 <SelectContent
                   position="popper"
                   sideOffset={6}
                   className={adminSelectContentClass}>
                   {categoryOptions.map((option) => (
                     <SelectItem
-                      key={option}
-                      value={option}
+                      key={option.id}
+                      value={option.id}
                       className={adminSelectItemClass}>
-                      {option}
+                      {option.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
+              {categoriesError ? (
+                <p className="text-xs leading-5 text-rose-600">
+                  {categoriesError}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -633,8 +829,7 @@ export default function CreateProductPage() {
             </div>
             <p className="max-w-3xl text-sm leading-6 text-slate-500">
               Chaque couleur contient maintenant des lignes compactes: taille,
-              total, Warda, Hanane et Amina sur la meme ligne. Les boutons de
-              tailles rapides servent a ajouter les lignes les plus courantes.
+              total, Warda, Hanane et Amina sur la meme ligne.
             </p>
           </div>
 
@@ -766,6 +961,12 @@ export default function CreateProductPage() {
             Media
           </div>
 
+          {mediaError ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {mediaError}
+            </div>
+          ) : null}
+
           {colors.length ? (
             <div
               className="grid gap-4"
@@ -775,6 +976,7 @@ export default function CreateProductPage() {
               {colors.map((color) => {
                 const inputId = `media-${color}`;
                 const files = mediaByColor[color] ?? [];
+                const isUploading = uploadingColors[color];
 
                 return (
                   <div
@@ -788,9 +990,11 @@ export default function CreateProductPage() {
                         </span>
                       </div>
                       <span className="text-xs text-slate-500">
-                        {files.length
-                          ? `${files.length} image${files.length > 1 ? "s" : ""}`
-                          : "Aucune image"}
+                        {isUploading
+                          ? "Upload en cours..."
+                          : files.length
+                            ? `${files.length} image${files.length > 1 ? "s" : ""}`
+                            : "Aucune image"}
                       </span>
                     </div>
 
@@ -810,11 +1014,13 @@ export default function CreateProductPage() {
                       <Button
                         type="button"
                         variant="outline"
+                        disabled={isUploading}
                         onClick={() => handleCancelUpload(color)}
                         className="h-10 w-fit rounded-xl border-slate-200 px-4 text-sm font-semibold text-[#081c16] hover:bg-slate-50">
                         Cancel upload
                       </Button>
                     )}
+
                     <Input
                       id={inputId}
                       type="file"
@@ -822,6 +1028,7 @@ export default function CreateProductPage() {
                       accept="image/*"
                       onChange={(event) => handleMediaChange(color, event)}
                       className="hidden"
+                      disabled={isUploading}
                     />
 
                     {files.length ? (
@@ -874,12 +1081,22 @@ export default function CreateProductPage() {
               </p>
             </div>
 
-            <Button
-              type="button"
-              onClick={handleValidateProduct}
-              className="h-11 rounded-xl bg-[#081c16] px-5 text-sm font-semibold text-white hover:bg-[#081c16]/90">
-              Valider le produit
-            </Button>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                type="button"
+                onClick={handleValidateProduct}
+                className="h-11 rounded-xl bg-[#081c16] px-5 text-sm font-semibold text-white hover:bg-[#081c16]/90">
+                Valider le produit
+              </Button>
+
+              <Button
+                type="button"
+                onClick={handleCreateProduct}
+                disabled={isSubmitting}
+                className="h-11 rounded-xl bg-[#081c16] px-5 text-sm font-semibold text-white hover:bg-[#081c16]/90 disabled:opacity-60">
+                {isSubmitting ? "Creation..." : "Creer le produit"}
+              </Button>
+            </div>
           </div>
 
           {validationFeedback ? (
@@ -910,6 +1127,18 @@ export default function CreateProductPage() {
                   </p>
                 ))}
               </div>
+            </div>
+          ) : null}
+
+          {submitError ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {submitError}
+            </div>
+          ) : null}
+
+          {submitSuccess ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {submitSuccess}
             </div>
           ) : null}
         </div>

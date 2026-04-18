@@ -3,7 +3,7 @@
 import * as React from "react";
 import { EllipsisVerticalIcon, Plus } from "lucide-react";
 
-import { products } from "@/app/(admin)/admin/products/data";
+import { createClient } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,27 +37,12 @@ const adminInputClass =
 const adminTextareaClass =
   "min-h-28 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-[#081c16] shadow-none outline-none placeholder:text-[#616669]/70 focus-visible:border-[#081c16] focus-visible:ring-3 focus-visible:ring-[#081c16]/10";
 const adminLabelClass = "text-sm font-medium text-[#081c16]";
+
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "2-digit",
   month: "short",
   year: "numeric",
 });
-const categoryDescriptions = {
-  Caftan:
-    "Caftans de ceremonie avec coupes structurees, sfifa soignee et finitions elegantes.",
-  Takchita:
-    "Silhouettes deux pieces pensees pour les grandes occasions et les looks plus habilles.",
-  Jabador:
-    "Ensembles traditionnels confortables avec une lecture plus sobre et masculine.",
-  Accessory:
-    "Ceintures, chaussures et pieces complementaires pour finaliser les tenues.",
-};
-const initialCreatedAt = [
-  "2026-01-11T09:30:00.000Z",
-  "2026-01-18T09:30:00.000Z",
-  "2026-02-03T09:30:00.000Z",
-  "2026-02-17T09:30:00.000Z",
-];
 
 function createEmptyDraft() {
   return {
@@ -67,7 +52,7 @@ function createEmptyDraft() {
 }
 
 function slugify(value) {
-  return value
+  return String(value || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -76,19 +61,13 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "");
 }
 
-const productCategories = [...new Set(products.map((product) => product.category))];
-const INITIAL_CATEGORIES = productCategories.map((categoryName, index) => ({
-  id: slugify(categoryName),
-  name: categoryName,
-  slug: slugify(categoryName),
-  description: categoryDescriptions[categoryName] ?? "",
-  active: index !== productCategories.length - 1,
-  createdAt:
-    initialCreatedAt[index] ?? new Date("2026-03-01T09:30:00.000Z").toISOString(),
-}));
-
-function createUniqueSlug(baseSlug, existingCategories, currentCategoryId = null) {
+function createUniqueSlug(
+  baseSlug,
+  existingCategories,
+  currentCategoryId = null,
+) {
   const resolvedBaseSlug = baseSlug || "category";
+
   const existingSlugs = new Set(
     existingCategories
       .filter((category) => category.id !== currentCategoryId)
@@ -120,16 +99,55 @@ function getStatusClassName(isActive) {
   return "border-slate-200 bg-slate-100 text-slate-500";
 }
 
+function mapCategoryRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description ?? "",
+    active: row.is_active,
+    createdAt: row.created_at,
+  };
+}
+
 export default function CategoriesPage() {
-  const [categories, setCategories] = React.useState(INITIAL_CATEGORIES);
+  const supabase = React.useMemo(() => createClient(), []);
+  const [categories, setCategories] = React.useState([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [pageError, setPageError] = React.useState("");
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [editingCategoryId, setEditingCategoryId] = React.useState(null);
   const [draftCategory, setDraftCategory] = React.useState(createEmptyDraft);
+
   const slugPreview = createUniqueSlug(
     slugify(draftCategory.name),
     categories,
     editingCategoryId,
   );
+
+  React.useEffect(() => {
+    async function loadCategories() {
+      setIsLoading(true);
+      setPageError("");
+
+      const { data, error } = await supabase
+        .from("categories")
+        .select("id, name, slug, description, is_active, created_at")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setPageError(error.message);
+        setIsLoading(false);
+        return;
+      }
+
+      setCategories((data || []).map(mapCategoryRow));
+      setIsLoading(false);
+    }
+
+    loadCategories();
+  }, [supabase]);
 
   function resetDialogState() {
     setEditingCategoryId(null);
@@ -165,33 +183,56 @@ export default function CategoriesPage() {
     }));
   }
 
-  function handleDeleteCategory(categoryId) {
+  async function handleDeleteCategory(categoryId) {
+    setPageError("");
+
+    const { error } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", categoryId);
+
+    if (error) {
+      setPageError(error.message);
+      return;
+    }
+
     setCategories((currentCategories) =>
       currentCategories.filter((category) => category.id !== categoryId),
     );
   }
 
-  function handleToggleActive(categoryId) {
+  async function handleToggleActive(categoryId) {
+    setPageError("");
+
+    const target = categories.find((category) => category.id === categoryId);
+    if (!target) return;
+
+    const nextValue = !target.active;
+
+    const { data, error } = await supabase
+      .from("categories")
+      .update({ is_active: nextValue })
+      .eq("id", categoryId)
+      .select("id, name, slug, description, is_active, created_at")
+      .single();
+
+    if (error) {
+      setPageError(error.message);
+      return;
+    }
+
     setCategories((currentCategories) =>
       currentCategories.map((category) =>
-        category.id === categoryId
-          ? {
-              ...category,
-              active: !category.active,
-            }
-          : category,
+        category.id === categoryId ? mapCategoryRow(data) : category,
       ),
     );
   }
 
-  function handleSubmitCategory(event) {
+  async function handleSubmitCategory(event) {
     event.preventDefault();
 
     const trimmedName = draftCategory.name.trim();
-
-    if (!trimmedName) {
-      return;
-    }
+    if (!trimmedName) return;
 
     const nextDescription = draftCategory.description.trim();
     const nextSlug = createUniqueSlug(
@@ -200,33 +241,57 @@ export default function CategoriesPage() {
       editingCategoryId,
     );
 
+    setIsSaving(true);
+    setPageError("");
+
     if (editingCategoryId) {
-      setCategories((currentCategories) =>
-        currentCategories.map((category) =>
-          category.id === editingCategoryId
-            ? {
-                ...category,
-                name: trimmedName,
-                slug: nextSlug,
-                description: nextDescription,
-              }
-            : category,
-        ),
-      );
-    } else {
-      setCategories((currentCategories) => [
-        {
-          id: `${nextSlug}-${Date.now()}`,
+      const { data, error } = await supabase
+        .from("categories")
+        .update({
           name: trimmedName,
           slug: nextSlug,
           description: nextDescription,
-          active: true,
-          createdAt: new Date().toISOString(),
-        },
+        })
+        .eq("id", editingCategoryId)
+        .select("id, name, slug, description, is_active, created_at")
+        .single();
+
+      if (error) {
+        setPageError(error.message);
+        setIsSaving(false);
+        return;
+      }
+
+      setCategories((currentCategories) =>
+        currentCategories.map((category) =>
+          category.id === editingCategoryId ? mapCategoryRow(data) : category,
+        ),
+      );
+    } else {
+      const { data, error } = await supabase
+        .from("categories")
+        .insert({
+          name: trimmedName,
+          slug: nextSlug,
+          description: nextDescription,
+          is_active: true,
+        })
+        .select("id, name, slug, description, is_active, created_at")
+        .single();
+
+      if (error) {
+        setPageError(error.message);
+        setIsSaving(false);
+        return;
+      }
+
+      setCategories((currentCategories) => [
+        mapCategoryRow(data),
         ...currentCategories,
       ]);
     }
 
+    setIsSaving(false);
     setIsDialogOpen(false);
     resetDialogState();
   }
@@ -238,6 +303,7 @@ export default function CategoriesPage() {
           <div className="flex flex-col gap-3">
             <h3 className="text-3xl font-bold">Categories</h3>
           </div>
+
           <div className="flex flex-wrap items-center justify-start gap-3 lg:justify-end">
             <button
               type="button"
@@ -250,6 +316,12 @@ export default function CategoriesPage() {
         </div>
 
         <Separator />
+
+        {pageError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {pageError}
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <Table className="min-w-[900px]">
@@ -274,7 +346,13 @@ export default function CategoriesPage() {
             </TableHeader>
 
             <TableBody>
-              {categories.length ? (
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-28 text-center">
+                    Loading categories...
+                  </TableCell>
+                </TableRow>
+              ) : categories.length ? (
                 categories.map((category) => (
                   <TableRow
                     key={category.id}
@@ -285,22 +363,29 @@ export default function CategoriesPage() {
                           {category.name}
                         </span>
                         <span className="max-w-[320px] text-xs leading-5 text-slate-500">
-                          {category.description || "Aucune description pour le moment."}
+                          {category.description ||
+                            "Aucune description pour le moment."}
                         </span>
                       </div>
                     </TableCell>
+
                     <TableCell className="px-3 py-3 text-sm text-slate-700">
                       {category.slug}
                     </TableCell>
+
                     <TableCell className="px-3 py-3">
                       <span
-                        className={`inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold ${getStatusClassName(category.active)}`}>
+                        className={`inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold ${getStatusClassName(
+                          category.active,
+                        )}`}>
                         {category.active ? "Active" : "Inactive"}
                       </span>
                     </TableCell>
+
                     <TableCell className="px-3 py-3 text-sm text-slate-700">
                       {formatCreatedAt(category.createdAt)}
                     </TableCell>
+
                     <TableCell className="px-3 py-3 text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -313,6 +398,7 @@ export default function CategoriesPage() {
                             <span className="sr-only">Open actions</span>
                           </Button>
                         </DropdownMenuTrigger>
+
                         <DropdownMenuContent
                           align="end"
                           sideOffset={10}
@@ -322,12 +408,15 @@ export default function CategoriesPage() {
                             className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50">
                             Edit
                           </DropdownMenuItem>
+
                           <DropdownMenuItem
                             onSelect={() => handleToggleActive(category.id)}
                             className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50">
                             {category.active ? "Desactiver" : "Activer"}
                           </DropdownMenuItem>
+
                           <DropdownMenuSeparator className="mx-0 my-1 bg-slate-200" />
+
                           <DropdownMenuItem
                             variant="destructive"
                             onSelect={() => handleDeleteCategory(category.id)}
@@ -351,10 +440,11 @@ export default function CategoriesPage() {
 
           <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">
-              Total: {categories.length} categor{categories.length === 1 ? "y" : "ies"}
+              Total: {categories.length} categor
+              {categories.length === 1 ? "y" : "ies"}
             </p>
             <p className="text-sm text-slate-500">
-              Le formulaire reste local pour le moment, sans insertion DB.
+              Categories are now connected to Supabase.
             </p>
           </div>
         </div>
@@ -365,11 +455,13 @@ export default function CategoriesPage() {
           <form onSubmit={handleSubmitCategory} className="flex flex-col">
             <DialogHeader className="px-6 py-5">
               <DialogTitle className="text-lg font-semibold text-[#081c16]">
-                {editingCategoryId ? "Modifier la categorie" : "Creer une categorie"}
+                {editingCategoryId
+                  ? "Modifier la categorie"
+                  : "Creer une categorie"}
               </DialogTitle>
               <DialogDescription className="text-sm leading-6 text-[#616669]">
-                Ajoutez le nom et la description. Le slug est genere automatiquement
-                a partir du nom.
+                Ajoutez le nom et la description. Le slug est genere
+                automatiquement a partir du nom.
               </DialogDescription>
             </DialogHeader>
 
@@ -390,7 +482,9 @@ export default function CategoriesPage() {
               </div>
 
               <div className="grid gap-3">
-                <Label htmlFor="category-description" className={adminLabelClass}>
+                <Label
+                  htmlFor="category-description"
+                  className={adminLabelClass}>
                   Description
                 </Label>
                 <textarea
@@ -423,10 +517,16 @@ export default function CategoriesPage() {
                   Annuler
                 </Button>
               </DialogClose>
+
               <Button
                 type="submit"
-                className="rounded-xl bg-[#081c16] text-white hover:bg-[#081c16]/90">
-                {editingCategoryId ? "Enregistrer" : "Create category"}
+                disabled={isSaving}
+                className="rounded-xl bg-[#081c16] text-white hover:bg-[#081c16]/90 disabled:opacity-60">
+                {isSaving
+                  ? "Saving..."
+                  : editingCategoryId
+                    ? "Enregistrer"
+                    : "Create category"}
               </Button>
             </div>
           </form>

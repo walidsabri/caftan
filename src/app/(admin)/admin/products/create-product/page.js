@@ -64,7 +64,9 @@ const commonSizeOptions = [
   "Unique",
 ];
 
-const categoryOptions = [...new Set(products.map((product) => product.category))];
+const categoryOptions = [
+  ...new Set(products.map((product) => product.category)),
+];
 
 function revokeMediaItems(mediaItems = []) {
   mediaItems.forEach((mediaItem) => {
@@ -163,13 +165,11 @@ export default function CreateProductPage() {
     };
   });
 
-  let quantityStatusClass =
-    "border-slate-200 bg-slate-50 text-slate-500";
+  let quantityStatusClass = "border-slate-200 bg-slate-50 text-slate-500";
   let quantityStatusText =
     "Le controle du total se fera quand vous validerez le produit.";
 
-  let allocationStatusClass =
-    "border-slate-200 bg-slate-50 text-slate-500";
+  let allocationStatusClass = "border-slate-200 bg-slate-50 text-slate-500";
   let allocationStatusText =
     "Le controle de repartition par proprietaire se fera a la validation.";
 
@@ -286,8 +286,7 @@ export default function CreateProductPage() {
         sizeRow.id === sizeRowId
           ? {
               ...sizeRow,
-              [field]:
-                field === "quantity" ? sanitizeCountInput(value) : value,
+              [field]: field === "quantity" ? sanitizeCountInput(value) : value,
             }
           : sizeRow,
       ),
@@ -331,7 +330,9 @@ export default function CreateProductPage() {
     }
 
     if (oldPriceValue > 0 && oldPriceValue <= priceValue) {
-      errors.push("L'ancien prix doit etre superieur au prix actuel pour afficher une promotion.");
+      errors.push(
+        "L'ancien prix doit etre superieur au prix actuel pour afficher une promotion.",
+      );
     }
 
     if (!hasDefinedTotalQuantity || totalQuantityValue <= 0) {
@@ -343,7 +344,9 @@ export default function CreateProductPage() {
     }
 
     colors.forEach((color) => {
-      const activeSizeRows = (stockByColor[color] ?? []).filter(sizeRowHasContent);
+      const activeSizeRows = (stockByColor[color] ?? []).filter(
+        sizeRowHasContent,
+      );
 
       if (!activeSizeRows.length) {
         errors.push(`${color}: ajoutez au moins une taille.`);
@@ -616,8 +619,8 @@ export default function CreateProductPage() {
             </div>
           ) : (
             <div className="flex min-h-24 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500">
-              Ajoutez d&apos;abord les couleurs du produit. Chaque couleur ouvrira sa
-              propre carte de stock.
+              Ajoutez d&apos;abord les couleurs du produit. Chaque couleur
+              ouvrira sa propre carte de stock.
             </div>
           )}
         </div>
@@ -795,11 +798,7 @@ export default function CreateProductPage() {
                       <label
                         htmlFor={inputId}
                         className="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 text-center transition-colors hover:border-slate-300 hover:bg-slate-50">
-                        <ImageUp
-                          size={18}
-                          color="#081c16"
-                          strokeWidth={2.2}
-                        />
+                        <ImageUp size={18} color="#081c16" strokeWidth={2.2} />
                         <span className="text-sm font-medium text-[#081c16]">
                           Upload pictures
                         </span>
@@ -870,8 +869,8 @@ export default function CreateProductPage() {
                 Validation du produit
               </div>
               <p className="text-sm leading-6 text-slate-500">
-                Les erreurs de stock s&apos;affichent seulement ici, au moment de
-                valider le produit.
+                Les erreurs de stock s&apos;affichent seulement ici, au moment
+                de valider le produit.
               </p>
             </div>
 

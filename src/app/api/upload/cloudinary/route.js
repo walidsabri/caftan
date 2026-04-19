@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
+import { ensureAdminRouteAccess } from "@/lib/admin-auth";
+import { createClient } from "@/lib/supabase/server";
 
 export async function POST(request) {
   try {
+    const supabase = await createClient();
+    const { unauthorizedResponse } = await ensureAdminRouteAccess(supabase);
+
+    if (unauthorizedResponse) {
+      return unauthorizedResponse;
+    }
+
     const formData = await request.formData();
     const files = formData.getAll("files");
 

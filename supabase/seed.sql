@@ -1,0 +1,7 @@
+-- Admin bootstrap notes
+-- 1. Create the auth user first from the Supabase Auth dashboard or API.
+-- 2. Then mark that auth user as an admin with:
+--
+-- select public.bootstrap_admin_profile('admin@example.com', 'Main Admin');
+--
+-- Repeat for every admin account that should access /admin.

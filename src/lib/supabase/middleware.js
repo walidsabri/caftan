@@ -1,13 +1,39 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 
+const ADMIN_LOGIN_PATH = "/admin/login";
+
+function copySupabaseCookies(sourceResponse, targetResponse) {
+  sourceResponse.cookies.getAll().forEach((cookie) => {
+    targetResponse.cookies.set(cookie);
+  });
+
+  return targetResponse;
+}
+
+function createRedirectResponse(request, supabaseResponse, pathname) {
+  const url = request.nextUrl.clone();
+  url.pathname = ADMIN_LOGIN_PATH;
+
+  if (pathname && pathname !== ADMIN_LOGIN_PATH) {
+    url.searchParams.set("next", pathname);
+  }
+
+  return copySupabaseCookies(supabaseResponse, NextResponse.redirect(url));
+}
+
+function createApiErrorResponse(supabaseResponse, status, error) {
+  return copySupabaseCookies(
+    supabaseResponse,
+    NextResponse.json({ error }, { status }),
+  );
+}
+
 export async function updateSession(request) {
   let supabaseResponse = NextResponse.next({
     request,
   });
 
-  // With Fluid compute, don't put this client in a global environment
-  // variable. Always create a new one on each request.
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
@@ -31,38 +57,66 @@ export async function updateSession(request) {
     },
   );
 
-  // Do not run code between createServerClient and
-  // supabase.auth.getClaims(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
+  const pathname = request.nextUrl.pathname;
+  const isAdminLoginRoute =
+    pathname === ADMIN_LOGIN_PATH || pathname.startsWith(`${ADMIN_LOGIN_PATH}/`);
+  const isProtectedAdminPage = pathname.startsWith("/admin") && !isAdminLoginRoute;
+  const isProtectedApiRoute =
+    pathname.startsWith("/api/admin") || pathname.startsWith("/api/upload");
 
-  // IMPORTANT: If you remove getClaims() and you use server-side rendering
-  // with the Supabase client, your users may be randomly logged out.
-  const { data } = await supabase.auth.getClaims();
-  const user = data?.claims;
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith("/login") &&
-    !request.nextUrl.pathname.startsWith("/auth")
-  ) {
-    // no user, potentially respond by redirecting the user to the login page
-    const url = request.nextUrl.clone();
-    url.pathname = "/admin/login";
-    return NextResponse.redirect(url);
+  if (userError) {
+    if (isProtectedApiRoute) {
+      return createApiErrorResponse(
+        supabaseResponse,
+        401,
+        "Unauthorized.",
+      );
+    }
+
+    if (isProtectedAdminPage) {
+      return createRedirectResponse(request, supabaseResponse, pathname);
+    }
+
+    return supabaseResponse;
   }
 
-  // IMPORTANT: You *must* return the supabaseResponse object as it is.
-  // If you're creating a new response object with NextResponse.next() make sure to:
-  // 1. Pass the request in it, like so:
-  //    const myNewResponse = NextResponse.next({ request })
-  // 2. Copy over the cookies, like so:
-  //    myNewResponse.cookies.setAll(supabaseResponse.cookies.getAll())
-  // 3. Change the myNewResponse object to fit your needs, but avoid changing
-  //    the cookies!
-  // 4. Finally:
-  //    return myNewResponse
-  // If this is not done, you may be causing the browser and server to go out
-  // of sync and terminate the user's session prematurely!
+  let isAdmin = false;
+
+  if (user) {
+    const { data: adminProfile } = await supabase
+      .from("admin_profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    isAdmin = Boolean(adminProfile);
+  }
+
+  if (isAdminLoginRoute && isAdmin) {
+    return copySupabaseCookies(
+      supabaseResponse,
+      NextResponse.redirect(new URL("/admin", request.url)),
+    );
+  }
+
+  if (!user || !isAdmin) {
+    if (isProtectedApiRoute) {
+      return createApiErrorResponse(
+        supabaseResponse,
+        user ? 403 : 401,
+        user ? "Admin access required." : "Unauthorized.",
+      );
+    }
+
+    if (isProtectedAdminPage) {
+      return createRedirectResponse(request, supabaseResponse, pathname);
+    }
+  }
 
   return supabaseResponse;
 }

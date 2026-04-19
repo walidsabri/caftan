@@ -2,10 +2,22 @@
 
 import * as React from "react";
 import Image from "next/image";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import {
+  ChevronLeft,
+  ChevronRight,
+  EllipsisVerticalIcon,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -44,83 +56,158 @@ function getStatusClassName(status) {
 
 const PAGE_SIZE = 10;
 
-const columns = [
-  {
-    id: "name",
-    header: "Product",
-    renderCell: (product) => (
-      <div className="flex min-w-[260px] items-center gap-3">
-        <div className="relative h-12 w-12 overflow-hidden rounded-xl bg-slate-100">
-          {product.image ? (
-            <Image
-              src={product.image}
-              alt={product.name}
-              fill
-              unoptimized
-              sizes="48px"
-              className="object-cover"
-            />
+function ProductActionsCell({
+  product,
+  activeAction,
+  onToggleProductStatus,
+  onDeleteProduct,
+}) {
+  const isAnyActionPending = activeAction !== null;
+  const isMutatingThisProduct = activeAction?.productId === product.id;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          disabled={isAnyActionPending}
+          className="cursor-pointer text-slate-500 hover:bg-slate-100 hover:text-[#081c16]">
+          <EllipsisVerticalIcon />
+          <span className="sr-only">Open actions</span>
+        </Button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent
+        align="end"
+        sideOffset={10}
+        className="w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+        <DropdownMenuItem
+          asChild
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50 focus:text-[#081c16] data-[highlighted]:bg-slate-50 data-[highlighted]:text-[#081c16]">
+          <Link href={`/admin/products/${product.id}/edit`}>Modifier</Link>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          disabled={isAnyActionPending}
+          onSelect={() => onToggleProductStatus(product)}
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50">
+          {product.status === "Active" ? "Desactiver" : "Activer"}
+        </DropdownMenuItem>
+
+        <DropdownMenuSeparator className="mx-0 my-1 bg-slate-200" />
+
+        <DropdownMenuItem
+          variant="destructive"
+          disabled={isAnyActionPending}
+          onSelect={() => onDeleteProduct(product)}
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm">
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function ProductsDataTable({
+  data = [],
+  isLoading = false,
+  activeAction = null,
+  onToggleProductStatus,
+  onDeleteProduct,
+}) {
+  const [pageIndex, setPageIndex] = React.useState(0);
+
+  const columns = [
+    {
+      id: "name",
+      header: "Product",
+      renderCell: (product) => (
+        <div className="flex min-w-[260px] items-center gap-3">
+          <div className="relative h-12 w-12 overflow-hidden rounded-xl bg-slate-100">
+            {product.image ? (
+              <Image
+                src={product.image}
+                alt={product.name}
+                fill
+                unoptimized
+                sizes="48px"
+                className="object-cover"
+              />
+            ) : null}
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="truncate font-medium text-[#081c16]">
+              {product.name}
+            </span>
+            <span className="truncate text-xs text-slate-500">
+              {product.slug || "No slug"}
+            </span>
+          </div>
+        </div>
+      ),
+      headerClassName: "px-4",
+      cellClassName: "px-4",
+    },
+    {
+      id: "category",
+      header: "Category",
+      renderCell: (product) => product.category || "--",
+    },
+    {
+      id: "price",
+      header: () => <div className="text-right">Price</div>,
+      renderCell: (product) => (
+        <div className="text-right font-medium text-[#081c16]">
+          {formatPrice(product.price)}
+          {product.oldPrice ? (
+            <div className="text-xs font-normal text-slate-400 line-through">
+              {formatPrice(product.oldPrice)}
+            </div>
           ) : null}
         </div>
-
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="truncate font-medium text-[#081c16]">
-            {product.name}
-          </span>
-          <span className="truncate text-xs text-slate-500">
-            {product.slug || "No slug"}
-          </span>
+      ),
+      headerClassName: "text-right",
+      cellClassName: "text-right",
+    },
+    {
+      id: "status",
+      header: "Status",
+      renderCell: (product) => (
+        <Badge
+          variant="outline"
+          className={cn(
+            "h-6 rounded-full px-2.5 text-xs font-medium",
+            getStatusClassName(product.status),
+          )}>
+          {product.status}
+        </Badge>
+      ),
+    },
+    {
+      id: "createdAt",
+      header: "Created at",
+      renderCell: (product) => formatDate(product.createdAt),
+    },
+    {
+      id: "actions",
+      header: () => <div className="text-right">Actions</div>,
+      renderCell: (product) => (
+        <div className="flex justify-end">
+          <ProductActionsCell
+            product={product}
+            activeAction={activeAction}
+            onToggleProductStatus={onToggleProductStatus}
+            onDeleteProduct={onDeleteProduct}
+          />
         </div>
-      </div>
-    ),
-    headerClassName: "px-4",
-    cellClassName: "px-4",
-  },
-  {
-    id: "category",
-    header: "Category",
-    renderCell: (product) => product.category || "--",
-  },
-  {
-    id: "price",
-    header: () => <div className="text-right">Price</div>,
-    renderCell: (product) => (
-      <div className="text-right font-medium text-[#081c16]">
-        {formatPrice(product.price)}
-        {product.oldPrice ? (
-          <div className="text-xs font-normal text-slate-400 line-through">
-            {formatPrice(product.oldPrice)}
-          </div>
-        ) : null}
-      </div>
-    ),
-    headerClassName: "text-right",
-    cellClassName: "text-right",
-  },
-  {
-    id: "status",
-    header: "Status",
-    renderCell: (product) => (
-      <Badge
-        variant="outline"
-        className={cn(
-          "h-6 rounded-full px-2.5 text-xs font-medium",
-          getStatusClassName(product.status)
-        )}
-      >
-        {product.status}
-      </Badge>
-    ),
-  },
-  {
-    id: "createdAt",
-    header: "Created at",
-    renderCell: (product) => formatDate(product.createdAt),
-  },
-];
-
-export function ProductsDataTable({ data = [], isLoading = false }) {
-  const [pageIndex, setPageIndex] = React.useState(0);
+      ),
+      headerClassName: "text-right",
+      cellClassName: "text-right",
+    },
+  ];
 
   const pageCount = Math.max(1, Math.ceil(data.length / PAGE_SIZE));
 
@@ -140,7 +227,7 @@ export function ProductsDataTable({ data = [], isLoading = false }) {
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <Table className="min-w-[880px]">
+      <Table className="min-w-[980px]">
         <TableHeader className="bg-white">
           <TableRow className="border-slate-200 bg-transparent hover:bg-transparent">
             {columns.map((column) => (

@@ -5,6 +5,16 @@ import Link from "next/link";
 import { Plus, Search, X } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -21,11 +31,16 @@ export default function ProductsPage() {
   const supabase = React.useMemo(() => createClient(), []);
 
   const [products, setProducts] = React.useState([]);
+  const [assigneeOptions, setAssigneeOptions] = React.useState([]);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [activeAction, setActiveAction] = React.useState(null);
+  const [pendingDeleteProduct, setPendingDeleteProduct] = React.useState(null);
   const [pageError, setPageError] = React.useState("");
+  const [pageSuccess, setPageSuccess] = React.useState("");
 
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedStatus, setSelectedStatus] = React.useState("all");
+  const [selectedAssignee, setSelectedAssignee] = React.useState("all");
   const [selectedCategory, setSelectedCategory] = React.useState("all");
 
   const deferredSearchQuery = React.useDeferredValue(searchQuery);
@@ -40,6 +55,8 @@ export default function ProductsPage() {
     "cursor-pointer rounded-xl px-3 py-2 text-sm text-[#081c16] focus:bg-black! focus:text-white! focus:[&_svg]:text-white! focus:[&_span]:text-white! hover:bg-black! hover:text-white! hover:[&_svg]:text-white! hover:[&_span]:text-white!";
 
   const selectedStatusLabel = selectedStatus === "all" ? null : selectedStatus;
+  const selectedAssigneeLabel =
+    selectedAssignee === "all" ? null : selectedAssignee;
   const selectedCategoryLabel =
     selectedCategory === "all" ? null : selectedCategory;
 
@@ -51,55 +68,215 @@ export default function ProductsPage() {
     async function fetchProducts() {
       setIsLoading(true);
       setPageError("");
+      setPageSuccess("");
 
-      const { data, error } = await supabase
-        .from("products")
-        .select(
-          `
-          id,
-          name,
-          slug,
-          price,
-          old_price,
-          cover_image_url,
-          is_active,
-          created_at,
-          categories (
-            name
+      const [productsResponse, stockOwnersResponse] = await Promise.all([
+        supabase
+          .from("products")
+          .select(
+            `
+            id,
+            name,
+            slug,
+            price,
+            old_price,
+            cover_image_url,
+            is_active,
+            created_at,
+            categories (
+              name
+            ),
+            product_variants (
+              variant_inventory (
+                quantity,
+                stock_owners (
+                  name
+                )
+              )
+            )
+          `,
           )
-        `,
-        )
-        .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("stock_owners")
+          .select("name")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
+      ]);
 
-      if (error) {
-        setPageError(error.message);
+      if (productsResponse.error || stockOwnersResponse.error) {
+        setPageError(
+          productsResponse.error?.message ||
+            stockOwnersResponse.error?.message ||
+            "Failed to load products.",
+        );
         setIsLoading(false);
         return;
       }
 
-      const mappedProducts = (data || []).map((product) => ({
-        id: product.id,
-        name: product.name,
-        slug: product.slug,
-        price: product.price,
-        oldPrice: product.old_price,
-        image: product.cover_image_url,
-        category: product.categories?.name ?? "Sans categorie",
-        status: product.is_active ? "Active" : "Inactive",
-        createdAt: product.created_at,
-      }));
+      const mappedProducts = (productsResponse.data || []).map((product) => {
+        const assignedOwners = Array.from(
+          new Set(
+            (product.product_variants ?? []).flatMap((variant) =>
+              (variant.variant_inventory ?? [])
+                .filter((inventoryRow) => Number(inventoryRow.quantity) > 0)
+                .map((inventoryRow) => inventoryRow.stock_owners?.name)
+                .filter(Boolean),
+            ),
+          ),
+        ).sort((firstOwner, secondOwner) =>
+          firstOwner.localeCompare(secondOwner),
+        );
+
+        return {
+          id: product.id,
+          name: product.name,
+          slug: product.slug,
+          price: product.price,
+          oldPrice: product.old_price,
+          image: product.cover_image_url,
+          category: product.categories?.name ?? "Sans categorie",
+          status: product.is_active ? "Active" : "Inactive",
+          createdAt: product.created_at,
+          assignedOwners,
+        };
+      });
+
+      const nextAssigneeOptions = Array.from(
+        new Set([
+          ...(stockOwnersResponse.data || [])
+            .map((owner) => owner.name?.trim())
+            .filter(Boolean),
+          ...mappedProducts.flatMap((product) => product.assignedOwners),
+        ]),
+      ).sort((firstOwner, secondOwner) => firstOwner.localeCompare(secondOwner));
 
       setProducts(mappedProducts);
+      setAssigneeOptions(nextAssigneeOptions);
       setIsLoading(false);
     }
 
     fetchProducts();
   }, [supabase]);
 
+  React.useEffect(() => {
+    if (
+      selectedAssignee !== "all" &&
+      !assigneeOptions.includes(selectedAssignee)
+    ) {
+      setSelectedAssignee("all");
+    }
+  }, [assigneeOptions, selectedAssignee]);
+
   function handleFilterIconPointerDown(event, clearFilter) {
     event.preventDefault();
     event.stopPropagation();
     clearFilter();
+  }
+
+  async function handleToggleProductStatus(product) {
+    const nextIsActive = product.status !== "Active";
+
+    setActiveAction({
+      productId: product.id,
+      type: "toggle-status",
+    });
+    setPageError("");
+    setPageSuccess("");
+
+    try {
+      const response = await fetch(`/api/admin/products/${product.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          isActive: nextIsActive,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.error || "Failed to update product status.");
+      }
+
+      setProducts((currentProducts) =>
+        currentProducts.map((currentProduct) =>
+          currentProduct.id === product.id
+            ? {
+                ...currentProduct,
+                status: result.product?.is_active ? "Active" : "Inactive",
+              }
+            : currentProduct,
+        ),
+      );
+      setPageSuccess("Statut du produit mis a jour.");
+    } catch (error) {
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update product status.",
+      );
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  function handleDeleteDialogOpenChange(nextOpen) {
+    if (activeAction?.type === "delete") {
+      return;
+    }
+
+    if (!nextOpen) {
+      setPendingDeleteProduct(null);
+    }
+  }
+
+  function handleDeleteProduct(product) {
+    setPendingDeleteProduct(product);
+  }
+
+  async function handleConfirmDeleteProduct() {
+    if (!pendingDeleteProduct) {
+      return;
+    }
+
+    setActiveAction({
+      productId: pendingDeleteProduct.id,
+      type: "delete",
+    });
+    setPageError("");
+    setPageSuccess("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/products/${pendingDeleteProduct.id}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.error || "Failed to delete product.");
+      }
+
+      setProducts((currentProducts) =>
+        currentProducts.filter(
+          (currentProduct) => currentProduct.id !== pendingDeleteProduct.id,
+        ),
+      );
+      setPendingDeleteProduct(null);
+      setPageSuccess("Produit supprime avec succes.");
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : "Failed to delete product.",
+      );
+    } finally {
+      setActiveAction(null);
+    }
   }
 
   const filteredProducts = products.filter((product) => {
@@ -110,10 +287,14 @@ export default function ProductsPage() {
     const matchesStatus =
       selectedStatus === "all" || product.status === selectedStatus;
 
+    const matchesAssignee =
+      selectedAssignee === "all" ||
+      product.assignedOwners.includes(selectedAssignee);
+
     const matchesCategory =
       selectedCategory === "all" || product.category === selectedCategory;
 
-    return matchesSearch && matchesStatus && matchesCategory;
+    return matchesSearch && matchesStatus && matchesAssignee && matchesCategory;
   });
 
   return (
@@ -137,6 +318,12 @@ export default function ProductsPage() {
       {pageError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {pageError}
+        </div>
+      ) : null}
+
+      {pageSuccess ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {pageSuccess}
         </div>
       ) : null}
 
@@ -200,6 +387,56 @@ export default function ProductsPage() {
           </SelectContent>
         </Select>
 
+        <Select value={selectedAssignee} onValueChange={setSelectedAssignee}>
+          <SelectTrigger
+            className={cn(
+              filterTriggerClass,
+              selectedAssigneeLabel && activeFilterTriggerClass,
+            )}>
+            <div className="flex items-center gap-1">
+              {selectedAssigneeLabel ? (
+                <span
+                  onPointerDown={(event) =>
+                    handleFilterIconPointerDown(event, () =>
+                      setSelectedAssignee("all"),
+                    )
+                  }
+                  className="inline-flex size-4 cursor-pointer items-center justify-center">
+                  <X size={15} color="#616669" strokeWidth={2.5} />
+                </span>
+              ) : (
+                <Plus size={15} color="#616669" strokeWidth={2.5} />
+              )}
+              <span>Assignee</span>
+              {selectedAssigneeLabel ? (
+                <>
+                  <span className="text-[#61666966]">|</span>
+                  <span className="text-[#081c16]">{selectedAssigneeLabel}</span>
+                </>
+              ) : null}
+            </div>
+          </SelectTrigger>
+
+          <SelectContent
+            align="start"
+            position="popper"
+            side="bottom"
+            sideOffset={6}
+            className={simpleDropdownClass}>
+            <SelectItem className={selectItemClass} value="all">
+              Tous les assignees
+            </SelectItem>
+            {assigneeOptions.map((assignee) => (
+              <SelectItem
+                key={assignee}
+                className={selectItemClass}
+                value={assignee}>
+                {assignee}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Select value={selectedCategory} onValueChange={setSelectedCategory}>
           <SelectTrigger
             className={cn(
@@ -253,7 +490,47 @@ export default function ProductsPage() {
         </Select>
       </div>
 
-      <ProductsDataTable data={filteredProducts} isLoading={isLoading} />
+      <ProductsDataTable
+        data={filteredProducts}
+        isLoading={isLoading}
+        activeAction={activeAction}
+        onToggleProductStatus={handleToggleProductStatus}
+        onDeleteProduct={handleDeleteProduct}
+      />
+
+      <AlertDialog
+        open={Boolean(pendingDeleteProduct)}
+        onOpenChange={handleDeleteDialogOpenChange}>
+        <AlertDialogContent>
+          <AlertDialogHeader className="gap-3">
+            <AlertDialogTitle>
+              Supprimer le produit
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteProduct
+                ? `Voulez-vous vraiment supprimer "${pendingDeleteProduct.name}" ? Cette action supprimera aussi ses images et son stock lies.`
+                : "Cette action est irreversible."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter className="pt-2">
+            <AlertDialogCancel disabled={activeAction?.type === "delete"}>
+              Annuler
+            </AlertDialogCancel>
+
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={activeAction?.type === "delete"}
+              onClick={handleConfirmDeleteProduct}
+              className="rounded-xl">
+              {activeAction?.type === "delete"
+                ? "Suppression..."
+                : "Supprimer"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

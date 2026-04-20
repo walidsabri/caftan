@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useCart } from "@/components/cart-provider";
 import { Label } from "@/components/ui/label";
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import algeriaCities from "@/lib/algeria_cities.json";
 import { formatPrice } from "@/lib/format-price";
+import { useShippingRates } from "@/hooks/use-shipping-rates";
 
 const wilayaNameCollator = new Intl.Collator("fr", {
   sensitivity: "base",
@@ -33,18 +35,8 @@ const SHIPPING_METHOD_OPTIONS = [
   },
 ];
 
-const ZR_EXPRESS_SHIPPING_RATES = {};
-
 function normalizeLocationName(value) {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function getShippingPrice(wilayaCode, shippingMethod) {
-  if (!wilayaCode || !shippingMethod) {
-    return null;
-  }
-
-  return ZR_EXPRESS_SHIPPING_RATES[wilayaCode]?.[shippingMethod] ?? null;
 }
 
 const wilayaOptions = Array.from(
@@ -83,11 +75,15 @@ const wilayaOptions = Array.from(
   }));
 
 export default function CheckoutPage() {
-  const { items, hasHydrated, subtotal, totalQuantity } = useCart();
-  const [submitted, setSubmitted] = useState(false);
+  const router = useRouter();
+  const { items, hasHydrated, subtotal, totalQuantity, clearCart } = useCart();
+
   const [selectedWilayaName, setSelectedWilayaName] = useState("");
   const [selectedCommune, setSelectedCommune] = useState("");
   const [selectedShippingMethod, setSelectedShippingMethod] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
+
   const [errors, setErrors] = useState({
     fullName: false,
     phoneEmpty: false,
@@ -102,16 +98,31 @@ export default function CheckoutPage() {
   const selectedWilaya = wilayaOptions.find(
     (wilaya) => wilaya.name === selectedWilayaName,
   );
+
   const communeOptions = selectedWilaya?.communes ?? [];
+
   const selectedShippingOption = SHIPPING_METHOD_OPTIONS.find(
     (option) => option.value === selectedShippingMethod,
   );
-  const shippingPrice = getShippingPrice(
-    selectedWilaya?.code,
-    selectedShippingMethod,
-  );
 
-  const handleSubmit = (event) => {
+  const {
+    shippingFee: shippingPrice,
+    shippingRates,
+    shippingLoading,
+    shippingError,
+  } = useShippingRates({
+    wilaya: selectedWilayaName,
+    wilayaCode: selectedWilaya?.code,
+    commune: selectedCommune,
+    shippingMethod: selectedShippingMethod,
+    enabled: Boolean(
+      selectedWilayaName && selectedWilaya?.code && selectedShippingMethod,
+    ),
+  });
+
+  const orderTotal = subtotal + (shippingPrice ?? 0);
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
 
     const formData = new FormData(event.target);
@@ -141,9 +152,71 @@ export default function CheckoutPage() {
     };
 
     setErrors(newErrors);
+    setSubmissionError("");
 
-    if (!Object.values(newErrors).some((error) => error)) {
-      setSubmitted(true);
+    if (Object.values(newErrors).some((error) => error)) {
+      return;
+    }
+
+    if (shippingLoading) {
+      setSubmissionError(
+        "Le tarif de livraison est en cours de chargement. Veuillez patienter.",
+      );
+      return;
+    }
+
+    if (shippingPrice === null) {
+      setSubmissionError(
+        shippingError ||
+          "Aucun tarif ZR Express n'est disponible pour cette commande.",
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fullName,
+          phone,
+          wilaya: selectedWilayaName,
+          wilayaCode: selectedWilaya?.code ?? null,
+          commune: selectedCommune,
+          address,
+          notes: formData.get("notes")?.trim() || "",
+          shippingMethod: selectedShippingMethod,
+          items: items.map((item) => ({
+            variantId: item.variantId,
+            quantity: item.quantity,
+          })),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result?.error || "Impossible d'enregistrer la commande.",
+        );
+      }
+
+      clearCart();
+      router.push(
+        `/checkout/merci?order=${encodeURIComponent(result.order.orderNumber)}`,
+      );
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error
+          ? error.message
+          : "Impossible d'enregistrer la commande.",
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -151,6 +224,7 @@ export default function CheckoutPage() {
     setSelectedWilayaName(value);
     setSelectedCommune("");
     setSelectedShippingMethod("");
+    setSubmissionError("");
   };
 
   if (!hasHydrated) {
@@ -219,9 +293,10 @@ export default function CheckoutPage() {
                   name="fullName"
                   type="text"
                   aria-invalid={errors.fullName}
-                  onChange={() =>
-                    setErrors((prev) => ({ ...prev, fullName: false }))
-                  }
+                  onChange={() => {
+                    setErrors((prev) => ({ ...prev, fullName: false }));
+                    setSubmissionError("");
+                  }}
                   className="h-12 w-full rounded-sm border border-caftan-border px-4 text-sm outline-none transition-colors focus:border-caftan-brand aria-invalid:border-red-500 aria-invalid:ring-1 aria-invalid:ring-red-500/50"
                   placeholder="Votre nom complet"
                 />
@@ -252,12 +327,15 @@ export default function CheckoutPage() {
                     errors.phonePrefix
                   }
                   onChange={() =>
-                    setErrors((prev) => ({
-                      ...prev,
-                      phoneEmpty: false,
-                      phoneLength: false,
-                      phonePrefix: false,
-                    }))
+                    {
+                      setErrors((prev) => ({
+                        ...prev,
+                        phoneEmpty: false,
+                        phoneLength: false,
+                        phonePrefix: false,
+                      }));
+                      setSubmissionError("");
+                    }
                   }
                   className="h-12 w-full rounded-sm border border-caftan-border px-4 text-sm outline-none transition-colors focus:border-caftan-brand aria-invalid:border-red-500 aria-invalid:ring-1 aria-invalid:ring-red-500/50"
                   placeholder="05XXXXXXXX"
@@ -323,6 +401,7 @@ export default function CheckoutPage() {
                   onValueChange={(value) => {
                     setSelectedCommune(value);
                     setErrors((prev) => ({ ...prev, commune: false }));
+                    setSubmissionError("");
                   }}
                   disabled={!selectedWilayaName}>
                   <SelectTrigger
@@ -358,7 +437,9 @@ export default function CheckoutPage() {
             <input type="hidden" name="wilaya" value={selectedWilayaName} />
             <input type="hidden" name="commune" value={selectedCommune} />
 
-            <div className="mt-5 space-y-3" data-invalid={errors.shippingMethod}>
+            <div
+              className="mt-5 space-y-3"
+              data-invalid={errors.shippingMethod}>
               <Label className="uppercase tracking-[0.12em] text-caftan-text">
                 Mode de livraison
               </Label>
@@ -366,7 +447,7 @@ export default function CheckoutPage() {
               <div className="grid gap-3 md:grid-cols-2">
                 {SHIPPING_METHOD_OPTIONS.map((option) => {
                   const isSelected = selectedShippingMethod === option.value;
-                  const isDisabled = !selectedWilayaName;
+                  const isDisabled = !selectedWilayaName || !selectedCommune;
 
                   return (
                     <label
@@ -392,6 +473,7 @@ export default function CheckoutPage() {
                             ...prev,
                             shippingMethod: false,
                           }));
+                          setSubmissionError("");
                         }}
                         className="sr-only"
                       />
@@ -420,19 +502,42 @@ export default function CheckoutPage() {
               </div>
 
               <p className="text-xs text-caftan-text">
-                {selectedWilaya
-                  ? shippingPrice !== null
-                    ? `Tarif ZR Express pour ${selectedWilaya.nameAscii}: ${formatPrice(
-                        shippingPrice,
-                      )}`
-                    : `Le tarif ZR Express pour ${selectedWilaya.nameAscii} sera charge ici quand l'API sera connectee.`
-                  : "Choisissez d'abord une wilaya pour activer le mode de livraison."}
+                {!selectedWilayaName
+                  ? "Choisissez d'abord une wilaya."
+                  : !selectedCommune
+                    ? "Choisissez ensuite une commune."
+                    : !selectedShippingMethod
+                      ? "Choisissez un mode de livraison pour calculer le tarif."
+                      : shippingLoading
+                        ? "Chargement du tarif ZR Express..."
+                        : shippingPrice !== null
+                          ? `Tarif ZR Express: ${formatPrice(shippingPrice)}`
+                          : "Aucun tarif disponible pour cette zone pour le moment."}
               </p>
+
+              {shippingError ? (
+                <p className="text-xs font-medium text-red-500">
+                  {shippingError}
+                </p>
+              ) : null}
 
               {selectedShippingMethod === "desk" && selectedCommune ? (
                 <p className="text-xs text-caftan-text">
                   Retrait prevu au bureau ZR Express le plus proche de{" "}
                   {selectedCommune}.
+                </p>
+              ) : null}
+
+              {shippingRates ? (
+                <p className="text-xs text-caftan-text">
+                  Domicile:{" "}
+                  {shippingRates.home !== null
+                    ? formatPrice(shippingRates.home)
+                    : "Non disponible"}{" "}
+                  | Bureau:{" "}
+                  {shippingRates.desk !== null
+                    ? formatPrice(shippingRates.desk)
+                    : "Non disponible"}
                 </p>
               ) : null}
 
@@ -454,9 +559,10 @@ export default function CheckoutPage() {
                 name="address"
                 type="text"
                 aria-invalid={errors.address}
-                onChange={() =>
-                  setErrors((prev) => ({ ...prev, address: false }))
-                }
+                onChange={() => {
+                  setErrors((prev) => ({ ...prev, address: false }));
+                  setSubmissionError("");
+                }}
                 className="h-12 w-full rounded-sm border border-caftan-border px-4 text-sm outline-none transition-colors focus:border-caftan-brand aria-invalid:border-red-500 aria-invalid:ring-1 aria-invalid:ring-red-500/50"
                 placeholder="Rue, numero, quartier..."
               />
@@ -477,6 +583,7 @@ export default function CheckoutPage() {
                 id="notes"
                 name="notes"
                 rows={5}
+                onChange={() => setSubmissionError("")}
                 className="w-full rounded-sm border border-caftan-border px-4 py-3 text-sm outline-none transition-colors focus:border-caftan-brand"
                 placeholder="Informations supplementaires pour la livraison..."
               />
@@ -490,15 +597,17 @@ export default function CheckoutPage() {
               </Link>
               <button
                 type="submit"
+                disabled={isSubmitting}
                 className="rounded-sm bg-caftan-brand px-6 py-3 text-sm font-medium uppercase tracking-[0.16em] text-caftan-cream transition-colors hover:bg-caftan-brand-dark disabled:cursor-not-allowed disabled:opacity-50">
-                Passer la commande
+                {isSubmitting
+                  ? "Enregistrement..."
+                  : "Passer la commande"}
               </button>
             </div>
 
-            {submitted ? (
-              <p className="mt-4 text-sm text-caftan-brand">
-                Vos informations ont ete preparees. La prochaine etape pourra
-                etre le branchement avec WhatsApp ou votre backend de commande.
+            {submissionError ? (
+              <p className="mt-4 text-sm text-red-500" role="alert">
+                {submissionError}
               </p>
             ) : null}
           </form>
@@ -536,30 +645,42 @@ export default function CheckoutPage() {
                 <span>Articles</span>
                 <span>{totalQuantity}</span>
               </div>
+
               <div className="flex items-center justify-between text-sm text-caftan-text">
                 <span>Livraison</span>
-                <span>
-                  {selectedShippingOption?.label ?? "A choisir"}
-                </span>
+                <span>{selectedShippingOption?.label ?? "A choisir"}</span>
               </div>
+
               <div className="flex items-center justify-between text-sm text-caftan-text">
                 <span>Tarif ZR Express</span>
                 <span>
-                  {shippingPrice !== null
-                    ? formatPrice(shippingPrice)
-                    : selectedWilaya && selectedShippingMethod
-                      ? "A integrer"
-                      : "A calculer"}
+                  {shippingLoading
+                    ? "Chargement..."
+                    : shippingPrice !== null
+                      ? formatPrice(shippingPrice)
+                      : selectedWilayaName &&
+                          selectedCommune &&
+                          selectedShippingMethod
+                        ? "Indisponible"
+                        : "A calculer"}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xl font-semibold text-caftan-text">
+
+              <div className="flex items-center justify-between text-sm text-caftan-text">
                 <span>Sous-total produits</span>
                 <span>{formatPrice(subtotal)}</span>
               </div>
-              <p className="text-xs leading-5 text-caftan-text">
-                Les frais de livraison seront ajoutes apres integration de
-                l&apos;API ZR Express.
-              </p>
+
+              <div className="flex items-center justify-between text-xl font-semibold text-caftan-text">
+                <span>Total estime</span>
+                <span>{formatPrice(orderTotal)}</span>
+              </div>
+
+              {shippingError ? (
+                <p className="text-xs leading-5 text-red-500">
+                  {shippingError}
+                </p>
+              ) : null}
             </div>
           </aside>
         </div>

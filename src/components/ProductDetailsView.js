@@ -8,6 +8,7 @@ import caftanTest from "../../public/caftan-test.jpg";
 import { Dot } from "lucide-react";
 import { useCart } from "@/components/cart-provider";
 import ProductItem from "@/components/product";
+import { formatPrice } from "@/lib/format-price";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -17,6 +18,26 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
+function getDefaultColor(product) {
+  return (
+    product.variants.find((variant) => variant.inStock)?.colorName ??
+    product.colorOptions[0]?.name ??
+    null
+  );
+}
+
+function getDefaultSize(product, colorName) {
+  const matchingVariants = product.variants.filter((variant) =>
+    colorName ? variant.colorName === colorName : true,
+  );
+
+  return (
+    matchingVariants.find((variant) => variant.inStock)?.sizeName ??
+    matchingVariants[0]?.sizeName ??
+    null
+  );
+}
+
 export default function ProductDetailsView({
   product,
   category,
@@ -24,12 +45,49 @@ export default function ProductDetailsView({
 }) {
   const router = useRouter();
   const { addItem } = useCart();
-  const sizes = Array.from({ length: 9 }, (_, i) => 36 + i * 2);
-  const [selectedSize, setSelectedSize] = useState(null);
-  const [selectedColor, setSelectedColor] = useState(product.colors[0]);
+  const [selectedColor, setSelectedColor] = useState(() =>
+    getDefaultColor(product),
+  );
+  const [selectedSize, setSelectedSize] = useState(() =>
+    getDefaultSize(product, getDefaultColor(product)),
+  );
   const [sizeError, setSizeError] = useState("");
 
+  const variantsForSelectedColor = product.variants.filter((variant) =>
+    selectedColor ? variant.colorName === selectedColor : true,
+  );
+  const sizeOptions = variantsForSelectedColor.length
+    ? variantsForSelectedColor
+    : product.variants;
+  const selectedVariant =
+    product.variants.find(
+      (variant) =>
+        variant.colorName === selectedColor &&
+        variant.sizeName === selectedSize,
+    ) ?? null;
+  const currentImage =
+    product.images.find(
+      (image) =>
+        !selectedColor ||
+        image.colorName === selectedColor ||
+        image.colorName == null,
+    )?.url ??
+    product.image ??
+    caftanTest;
+  const currentPriceClass = product.hasOffer
+    ? "text-red-600"
+    : "text-caftan-brand";
+  const oldPriceClass = product.hasOffer ? "text-black" : "text-caftan-brand";
+
   const handleSizeChange = (size) => {
+    const targetVariant = sizeOptions.find(
+      (variant) => variant.sizeName === size,
+    );
+
+    if (!targetVariant || !targetVariant.inStock) {
+      return;
+    }
+
     const nextSize = selectedSize === size ? null : size;
 
     setSelectedSize(nextSize);
@@ -41,39 +99,37 @@ export default function ProductDetailsView({
 
   const handleColorChange = (color) => {
     setSelectedColor(color);
+    setSelectedSize(getDefaultSize(product, color));
+    setSizeError("");
   };
 
   const handleAddToCart = () => {
-    if (!selectedSize) {
-      setSizeError("Veuillez choisir une taille avant d'ajouter au panier.");
+    if (product.isSoldOut) {
+      setSizeError("Ce produit est actuellement indisponible.");
       return;
     }
 
-    const selectedImage = getImageForColor(selectedColor);
+    if (!selectedVariant || !selectedVariant.inStock) {
+      setSizeError(
+        "Veuillez choisir une taille disponible avant d'ajouter au panier.",
+      );
+      return;
+    }
 
     addItem({
+      variantId: selectedVariant.id,
       productId: product.id,
       slug: product.slug,
       categorySlug: product.categorySlug,
       name: product.name,
       price: product.price,
-      image:
-        typeof selectedImage === "string" ? selectedImage : selectedImage.src,
-      size: String(selectedSize),
+      image: typeof currentImage === "string" ? currentImage : currentImage.src,
+      size: String(selectedVariant.sizeName),
       color: selectedColor,
       quantity: 1,
     });
 
     router.push("/cart");
-  };
-
-  // Map colors to images (update paths based on your actual image structure)
-  const getImageForColor = (color) => {
-    const colorMap = {
-      [product.colors[0]]: caftanTest,
-      // Add more color-to-image mappings as needed
-    };
-    return colorMap[color] || caftanTest;
   };
 
   return (
@@ -105,8 +161,25 @@ export default function ProductDetailsView({
 
         <div className="flex w-full flex-col justify-start gap-5 bg-caftan-cream p-4 shadow-sm shadow-caftan-brand/10 md:flex-row md:items-start md:gap-12">
           <div className="relative w-full overflow-hidden rounded-sm aspect-[8/9] md:w-[38%] md:aspect-[4/5] md:shrink-0">
+            <div className="absolute left-3 top-3 z-10 flex flex-col items-start gap-2">
+              {product.isNew ? (
+                <span className="bg-black px-3 py-1 text-[0.5rem] font-semibold uppercase tracking-[0.18em] text-white">
+                  Nouveau
+                </span>
+              ) : null}
+              {product.hasOffer ? (
+                <span className="bg-red-600 px-3 py-1 text-[0.5rem] font-semibold uppercase tracking-[0.18em] text-white">
+                  Promotion
+                </span>
+              ) : null}
+              {product.isSoldOut ? (
+                <span className="rounded-full bg-black px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-white">
+                  Epuisé
+                </span>
+              ) : null}
+            </div>
             <Image
-              src={getImageForColor(selectedColor)}
+              src={currentImage}
               alt={product.name}
               fill
               sizes="(min-width: 768px) 38vw, 100vw"
@@ -120,11 +193,30 @@ export default function ProductDetailsView({
             </p>
 
             <div className="space-y-3">
-              <h1 className="text-2xl font-semibold leading-tight text-caftan-text md:text-5xl">
+              <h1 className="text-2xl font-thin leading-tight text-caftan-text md:text-5xl uppercase">
                 {product.name}
               </h1>
-              <p className="text-2xl font-semibold tracking-[0.08em] text-caftan-brand md:text-3xl">
-                {product.price} DA
+              <div className="flex flex-wrap items-end gap-3">
+                <p
+                  className={`text-2xl font-thin tracking-[0.08em] md:text-3xl ${currentPriceClass}`}>
+                  {formatPrice(product.price)}
+                </p>
+                {product.oldPrice ? (
+                  <p
+                    className={`text-lg line-through font-thin md:text-xl ${oldPriceClass}`}>
+                    {formatPrice(product.oldPrice)}
+                  </p>
+                ) : null}
+              </div>
+              {product.description ? (
+                <p className="max-w-2xl text-sm leading-6 text-caftan-text md:text-base">
+                  {product.description}
+                </p>
+              ) : null}
+              <p className="text-sm text-caftan-brand-dark">
+                {product.isSoldOut
+                  ? "Toutes les variantes sont en rupture de stock."
+                  : `${product.availableQuantity} piece${product.availableQuantity > 1 ? "s" : ""} disponible${product.availableQuantity > 1 ? "s" : ""} pour le moment.`}
               </p>
             </div>
 
@@ -133,17 +225,22 @@ export default function ProductDetailsView({
                 Taille disponible
               </p>
               <div className="flex flex-wrap gap-2.5">
-                {sizes.map((size) => (
+                {sizeOptions.map((variant) => (
                   <button
                     type="button"
-                    key={size}
-                    onClick={() => handleSizeChange(size)}
-                    className={`flex h-10 w-10 cursor-pointer items-center justify-center border text-sm font-semibold shadow-sm shadow-caftan-brand/10 transition-colors ${
-                      selectedSize === size
+                    key={`${variant.colorId}-${variant.sizeId}`}
+                    disabled={!variant.inStock}
+                    onClick={() => handleSizeChange(variant.sizeName)}
+                    className={`flex h-10 min-w-10 cursor-pointer items-center justify-center border px-3 text-sm font-semibold shadow-sm shadow-caftan-brand/10 transition-colors ${
+                      selectedSize === variant.sizeName
                         ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
                         : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand hover:bg-caftan-light/55"
+                    } ${
+                      !variant.inStock
+                        ? "cursor-not-allowed opacity-40 line-through hover:border-caftan-border hover:bg-caftan-surface"
+                        : ""
                     }`}>
-                    {size}
+                    {variant.sizeName}
                   </button>
                 ))}
               </div>
@@ -159,31 +256,41 @@ export default function ProductDetailsView({
                 Couleurs Disponible
               </p>
               <div className="flex flex-wrap gap-2.5">
-                {product.colors.map((color) => (
-                  <button
-                    type="button"
-                    key={color}
-                    onClick={() => handleColorChange(color)}
-                    className={`cursor-pointer border px-5 py-2 text-sm font-medium shadow-lg shadow-caftan-brand/10 transition-colors ${
-                      selectedColor === color
-                        ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
-                        : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand hover:bg-caftan-light/55"
-                    }`}>
-                    {color}
-                  </button>
-                ))}
+                {product.colorOptions.map((color) => {
+                  const hasStockForColor = product.variants.some(
+                    (variant) =>
+                      variant.colorName === color.name && variant.inStock,
+                  );
+
+                  return (
+                    <button
+                      type="button"
+                      key={color.id}
+                      onClick={() => handleColorChange(color.name)}
+                      className={`cursor-pointer border px-5 py-2 text-sm font-medium shadow-lg shadow-caftan-brand/10 transition-colors ${
+                        selectedColor === color.name
+                          ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
+                          : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand hover:bg-caftan-light/55"
+                      } ${!hasStockForColor ? "opacity-50 line-through" : ""}`}>
+                      {color.name}
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div>
               <button
                 type="button"
                 onClick={handleAddToCart}
-                className="cursor-pointer rounded-2xl border border-caftan-brand bg-caftan-brand px-14 py-4 text-base text-caftan-cream transition-colors hover:bg-caftan-brand-dark">
-                Ajouter au panier
+                disabled={product.isSoldOut}
+                className="cursor-pointer w-full rounded-2xl border border-caftan-brand bg-caftan-brand px-14 py-4 text-base text-caftan-cream transition-colors hover:bg-caftan-brand-dark disabled:cursor-not-allowed disabled:opacity-50">
+                {product.isSoldOut
+                  ? "Produit indisponible"
+                  : "Ajouter au panier"}
               </button>
             </div>
 
-            <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:flex-wrap">
+            {/* <div className="flex flex-col gap-3 justify-center pt-2 sm:flex-row sm:flex-wrap">
               <Link
                 href="/products"
                 className="rounded-full border border-caftan-border px-5 py-3 text-center text-sm font-medium text-caftan-text transition-colors hover:bg-caftan-surface">
@@ -194,7 +301,7 @@ export default function ProductDetailsView({
                 className="rounded-full bg-caftan-brand px-5 py-3 text-center text-sm font-medium text-caftan-cream transition-colors hover:bg-caftan-brand-dark">
                 More {category.name}
               </Link>
-            </div>
+            </div> */}
           </div>
         </div>
       </div>

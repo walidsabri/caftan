@@ -2,41 +2,11 @@ import { notFound } from "next/navigation";
 import ProductCollectionPage from "@/components/ProductCollectionPage";
 import ProductDetailsView from "@/components/ProductDetailsView";
 import {
-  categories,
-  getCategoryBySlug,
-  getCategoryName,
-  getProductBySlug,
-  getProductsByCategory,
-  products,
-} from "@/lib/catalog-data";
-
-export function generateStaticParams() {
-  const categoryParams = categories.map((category) => ({
-    segments: [category.slug],
-  }));
-  const flatProductParams = products.map((product) => ({
-    segments: [product.slug],
-  }));
-  const nestedProductParams = products.map((product) => ({
-    segments: [product.categorySlug, product.slug],
-  }));
-
-  return [...categoryParams, ...flatProductParams, ...nestedProductParams];
-}
-
-function getRelatedProducts(product) {
-  return products
-    .filter(
-      (candidate) =>
-        candidate.categorySlug === product.categorySlug &&
-        candidate.slug !== product.slug,
-    )
-    .slice(0, 4)
-    .map((candidate) => ({
-      ...candidate,
-      categoryName: getCategoryName(candidate.categorySlug),
-    }));
-}
+  getStorefrontCategoryBySlug,
+  getStorefrontProductBySlug,
+  getStorefrontProductsByCategory,
+  getStorefrontRelatedProducts,
+} from "@/lib/storefront-catalog";
 
 export default async function ProductsCatchAllPage({ params }) {
   const { segments } = await params;
@@ -47,18 +17,17 @@ export default async function ProductsCatchAllPage({ params }) {
 
   if (segments.length === 1) {
     const [slug] = segments;
-    const category = getCategoryBySlug(slug);
+    const [category, product] = await Promise.all([
+      getStorefrontCategoryBySlug(slug),
+      getStorefrontProductBySlug(slug),
+    ]);
 
     if (category) {
-      const categoryProducts = getProductsByCategory(category.slug).map(
-        (product) => ({
-          ...product,
-          categoryName: category.name,
-        }),
-      );
+      const categoryProducts = await getStorefrontProductsByCategory(category.slug);
 
       return (
         <ProductCollectionPage
+          key={category.slug}
           title={category.name}
           description={category.description}
           products={categoryProducts}
@@ -68,20 +37,22 @@ export default async function ProductsCatchAllPage({ params }) {
       );
     }
 
-    const product = getProductBySlug(slug);
-
     if (product) {
-      const productCategory = getCategoryBySlug(product.categorySlug);
-
-      if (!productCategory) {
-        notFound();
-      }
+      const relatedProducts = await getStorefrontRelatedProducts(
+        product.id,
+        product.categorySlug,
+      );
 
       return (
         <ProductDetailsView
-          product={{ ...product, categoryName: productCategory.name }}
-          category={productCategory}
-          relatedProducts={getRelatedProducts(product)}
+          key={product.id}
+          product={product}
+          category={{
+            slug: product.categorySlug,
+            name: product.categoryName,
+            description: product.categoryDescription,
+          }}
+          relatedProducts={relatedProducts}
         />
       );
     }
@@ -91,18 +62,26 @@ export default async function ProductsCatchAllPage({ params }) {
 
   if (segments.length === 2) {
     const [categorySlug, productSlug] = segments;
-    const category = getCategoryBySlug(categorySlug);
-    const product = getProductBySlug(productSlug);
+    const [category, product] = await Promise.all([
+      getStorefrontCategoryBySlug(categorySlug),
+      getStorefrontProductBySlug(productSlug),
+    ]);
 
     if (!category || !product || product.categorySlug !== category.slug) {
       notFound();
     }
 
+    const relatedProducts = await getStorefrontRelatedProducts(
+      product.id,
+      product.categorySlug,
+    );
+
     return (
       <ProductDetailsView
-        product={{ ...product, categoryName: category.name }}
+        key={product.id}
+        product={product}
         category={category}
-        relatedProducts={getRelatedProducts(product)}
+        relatedProducts={relatedProducts}
       />
     );
   }

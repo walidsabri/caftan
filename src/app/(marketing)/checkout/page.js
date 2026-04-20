@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import algeriaCities from "@/lib/algeria_cities.json";
+import { formatPrice } from "@/lib/format-price";
 
 const wilayaNameCollator = new Intl.Collator("fr", {
   sensitivity: "base",
@@ -80,13 +81,6 @@ const wilayaOptions = Array.from(
         wilayaNameCollator.compare(left.nameAscii, right.nameAscii),
       ),
   }));
-
-function formatPrice(price) {
-  return `DA ${price.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
 
 export default function CheckoutPage() {
   const { items, hasHydrated, subtotal, totalQuantity } = useCart();

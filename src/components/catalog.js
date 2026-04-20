@@ -1,10 +1,7 @@
-"use client";
-
 import Link from "next/link";
 import ProductItem from "./product";
-import { featuredProducts, getCategoryName } from "@/lib/catalog-data";
 
-export default function Catalog() {
+export default function Catalog({ products = [] }) {
   return (
     <section className="px-4 py-12">
       <div className="mx-auto max-w-7xl">
@@ -12,16 +9,27 @@ export default function Catalog() {
           Nouveautes
         </h2>
 
-        <div className="mb-12 grid grid-cols-2 gap-4 md:grid-cols-4">
-          {featuredProducts.map((product) => (
-            <ProductItem
-              key={product.id}
-              {...product}
-              categoryName={getCategoryName(product.categorySlug)}
-              href={`/products/${product.slug}`}
-            />
-          ))}
-        </div>
+        {products.length ? (
+          <div className="mt-6 mb-12 grid grid-cols-2 gap-4 md:grid-cols-4">
+            {products.map((product) => (
+              <ProductItem
+                key={product.id}
+                {...product}
+                href={`/products/${product.slug}`}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="mb-12 rounded-3xl border border-dashed border-caftan-border bg-caftan-cream px-6 py-12 text-center">
+            <h3 className="text-xl font-semibold text-caftan-text">
+              Aucun produit actif pour le moment
+            </h3>
+            <p className="mt-3 text-sm text-caftan-text">
+              Les nouveautes apparaitront ici des qu&apos;elles seront publiees
+              depuis le dashboard.
+            </p>
+          </div>
+        )}
 
         <div className="flex justify-center">
           <Link

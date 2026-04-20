@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation";
 import { ShoppingCart } from "lucide-react";
 import { useCart } from "@/components/cart-provider";
 import { cn } from "@/lib/utils";
-import { categories, getProductBySlug } from "@/lib/catalog-data";
 import logo from "../../public/logo.png";
 
 const primaryLinks = [
@@ -15,22 +14,24 @@ const primaryLinks = [
   { label: "Cart", href: "/cart", icon: ShoppingCart },
 ];
 
-const categoryLinks = categories.map(({ name, slug }) => ({
-  label: name,
-  slug,
-}));
-
-export default function NavBar() {
+export default function NavBar({
+  categories = [],
+  productCategoryBySlug = {},
+}) {
   const { hasHydrated, totalQuantity } = useCart();
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
+  const categoryLinks = categories.map(({ name, slug }) => ({
+    label: name,
+    slug,
+  }));
   const pathSegments = pathname.split("/").filter(Boolean);
   const firstProductsSegment = pathSegments[1];
   const activeCategory = categoryLinks.some(
     ({ slug }) => slug === firstProductsSegment,
   )
     ? firstProductsSegment
-    : getProductBySlug(firstProductsSegment)?.categorySlug ?? null;
+    : productCategoryBySlug[firstProductsSegment] ?? null;
   const isProductsRoute =
     pathname === "/products" || pathname.startsWith("/products/");
   const cartCount = hasHydrated ? totalQuantity : 0;

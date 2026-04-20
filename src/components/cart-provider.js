@@ -121,6 +121,7 @@ export function CartProvider({ children }) {
       ...currentItems,
       {
         cartItemId,
+        variantId: item.variantId,
         productId: item.productId,
         slug: item.slug,
         categorySlug: item.categorySlug,

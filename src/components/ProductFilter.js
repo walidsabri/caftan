@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Settings2, X } from "lucide-react";
 import { geist } from "@/app/fonts";
 import { Separator } from "@/components/ui/separator";
@@ -8,37 +7,29 @@ import { Separator } from "@/components/ui/separator";
 import { Button } from "./ui/button";
 import { Slider } from "./ui/slider";
 
-export default function ProductFilter({ onOpenChange }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const min_price = 15000;
-  const max_price = 100000;
-  const [priceRange, setPriceRange] = useState([min_price, max_price]);
-  const [selectedSizes, setSelectedSizes] = useState([]);
-  const [selectedColors, setSelectedColors] = useState([]);
-
-  const sizes = Array.from({ length: 9 }, (_, i) => 36 + i * 2);
-  const colors = ["Noir", "Blanc", "Rouge", "Bleu"];
+export default function ProductFilter({
+  isOpen,
+  onOpenChange,
+  minPrice,
+  maxPrice,
+  priceRange,
+  onPriceRangeChange,
+  selectedSizes,
+  selectedColors,
+  sizeOptions,
+  colorOptions,
+  onToggleSize,
+  onToggleColor,
+  onReset,
+}) {
+  const sliderMax = maxPrice > minPrice ? maxPrice : minPrice + 1000;
 
   const formatPrice = (price) => {
-    return price === max_price ? `${price} Da+` : `${price} Da`;
-  };
-
-  const handleSizeChange = (size) => {
-    setSelectedSizes((prev) =>
-      prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size],
-    );
-  };
-
-  const handleColorChange = (color) => {
-    setSelectedColors((prev) =>
-      prev.includes(color) ? prev.filter((c) => c !== color) : [...prev, color],
-    );
+    return price === maxPrice ? `${price} DA` : `${price} DA`;
   };
 
   const handleToggle = () => {
-    const newState = !isOpen;
-    setIsOpen(newState);
-    onOpenChange?.(newState);
+    onOpenChange?.(!isOpen);
   };
 
   return (
@@ -47,7 +38,7 @@ export default function ProductFilter({ onOpenChange }) {
         type="button"
         variant="outline"
         onClick={handleToggle}
-        className="w-fit cursor-pointer rounded-2xl border-caftan-border bg-caftan-surface px-4 py-2 font-mono text-caftan-text shadow-sm mt-5">
+        className="w-fit cursor-pointer rounded-2xl border-caftan-border bg-caftan-surface px-4 py-2 font-mono text-caftan-text shadow-sm">
         <span>Filtre</span>
         <Settings2 className="size-4" />
       </Button>
@@ -97,72 +88,80 @@ export default function ProductFilter({ onOpenChange }) {
                   <div className="flex items-center gap-4">
                     <Slider
                       value={priceRange}
-                      onValueChange={setPriceRange}
-                      min={15000}
-                      max={100000}
-                      step={1000}
+                      onValueChange={onPriceRangeChange}
+                      min={minPrice}
+                      max={sliderMax}
+                      step={500}
                       aria-label="Price range slider"
                       className="w-full"
                     />
                   </div>
                 </li>
                 <Separator />
-                <li className="pb-4">
-                  <p
-                    className={`mb-3 text-base font-semibold ${geist.className}`}>
-                    Filtrage par taille :
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {sizes.map((size) => (
-                      <button
-                        key={size}
-                        type="button"
-                        onClick={() => handleSizeChange(size)}
-                        className={`flex h-11 w-11 items-center justify-center rounded-xl border text-sm font-semibold transition ${
-                          selectedSizes.includes(size)
-                            ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
-                            : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand/50"
-                        }`}>
-                        {size}
-                      </button>
-                    ))}
-                  </div>
-                </li>
-                <Separator />
-                <li className="pb-2">
-                  <p
-                    className={`mb-3 text-base font-semibold ${geist.className}`}>
-                    Filtrage par couleurs :
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {colors.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
-                        onClick={() => handleColorChange(color)}
-                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${geist.className} ${
-                          selectedColors.includes(color)
-                            ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
-                            : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand/50"
-                        }`}>
-                        {color}
-                      </button>
-                    ))}
-                  </div>
-                </li>
+                {sizeOptions.length ? (
+                  <>
+                    <li className="pb-4">
+                      <p
+                        className={`mb-3 text-base font-semibold ${geist.className}`}>
+                        Filtrage par taille :
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {sizeOptions.map((size) => (
+                          <button
+                            key={size}
+                            type="button"
+                            onClick={() => onToggleSize(size)}
+                            className={`flex h-11 min-w-11 items-center justify-center rounded-xl border px-3 text-sm font-semibold transition ${
+                              selectedSizes.includes(size)
+                                ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
+                                : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand/50"
+                            }`}>
+                            {size}
+                          </button>
+                        ))}
+                      </div>
+                    </li>
+                    <Separator />
+                  </>
+                ) : null}
+                {colorOptions.length ? (
+                  <li className="pb-2">
+                    <p
+                      className={`mb-3 text-base font-semibold ${geist.className}`}>
+                      Filtrage par couleurs :
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {colorOptions.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => onToggleColor(color)}
+                          className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${geist.className} ${
+                            selectedColors.includes(color)
+                              ? "border-caftan-brand bg-caftan-brand text-caftan-cream"
+                              : "border-caftan-border bg-caftan-surface text-caftan-text hover:border-caftan-brand/50"
+                          }`}>
+                          {color}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                ) : null}
               </ul>
             </div>
 
             <div className="flex gap-3 border-t border-caftan-border bg-caftan-cream px-5 py-4">
               <button
                 type="button"
+                onClick={onReset}
                 className="flex-1 cursor-pointer rounded-2xl border border-caftan-border px-5 py-3 text-base font-medium text-caftan-text transition-colors hover:bg-caftan-surface">
-                Resete
+                Reset
               </button>
               <button
                 type="button"
+                onClick={handleToggle}
                 className="flex-1 cursor-pointer rounded-2xl bg-caftan-brand px-5 py-3 text-base text-caftan-cream transition-colors hover:bg-caftan-brand-dark">
-                Filtrer
+                Voir les produits
               </button>
             </div>
           </div>

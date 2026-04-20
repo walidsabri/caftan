@@ -4,13 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { useCart } from "@/components/cart-provider";
-
-function formatPrice(price) {
-  return `DA ${price.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
+import { formatPrice } from "@/lib/format-price";
 
 export default function CartPage() {
   const {

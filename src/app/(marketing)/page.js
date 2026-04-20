@@ -1,11 +1,14 @@
 import Catalog from "@/components/catalog";
 import Hero from "@/components/Hero";
+import { getStorefrontFeaturedProducts } from "@/lib/storefront-catalog";
 
-export default function Home() {
+export default async function Home() {
+  const featuredProducts = await getStorefrontFeaturedProducts();
+
   return (
     <>
       <Hero />
-      <Catalog />
+      <Catalog products={featuredProducts} />
     </>
   );
 }

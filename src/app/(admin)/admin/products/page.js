@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { Plus, Search, X } from "lucide-react";
 
-import { createClient } from "@/lib/supabase/client";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -23,15 +22,20 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 import { ProductsDataTable } from "./products-data-table";
 
-export default function ProductsPage() {
-  const supabase = React.useMemo(() => createClient(), []);
+function compareLabels(firstLabel = "", secondLabel = "") {
+  return firstLabel.localeCompare(secondLabel);
+}
 
+export default function ProductsPage() {
   const [products, setProducts] = React.useState([]);
   const [assigneeOptions, setAssigneeOptions] = React.useState([]);
+  const [categoryOptions, setCategoryOptions] = React.useState([]);
+  const [sizeOptions, setSizeOptions] = React.useState([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [activeAction, setActiveAction] = React.useState(null);
   const [pendingDeleteProduct, setPendingDeleteProduct] = React.useState(null);
@@ -40,8 +44,11 @@ export default function ProductsPage() {
 
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedStatus, setSelectedStatus] = React.useState("all");
+  const [selectedStock, setSelectedStock] = React.useState("all");
   const [selectedAssignee, setSelectedAssignee] = React.useState("all");
   const [selectedCategory, setSelectedCategory] = React.useState("all");
+  const [selectedSize, setSelectedSize] = React.useState("all");
+  const [selectedColor, setSelectedColor] = React.useState("all");
 
   const deferredSearchQuery = React.useDeferredValue(searchQuery);
 
@@ -55,14 +62,17 @@ export default function ProductsPage() {
     "cursor-pointer rounded-xl px-3 py-2 text-sm text-[#081c16] focus:bg-black! focus:text-white! focus:[&_svg]:text-white! focus:[&_span]:text-white! hover:bg-black! hover:text-white! hover:[&_svg]:text-white! hover:[&_span]:text-white!";
 
   const selectedStatusLabel = selectedStatus === "all" ? null : selectedStatus;
+  const selectedStockLabel = selectedStock === "all" ? null : selectedStock;
   const selectedAssigneeLabel =
     selectedAssignee === "all" ? null : selectedAssignee;
   const selectedCategoryLabel =
     selectedCategory === "all" ? null : selectedCategory;
+  const selectedSizeLabel = selectedSize === "all" ? null : selectedSize;
+  const selectedColorLabel = selectedColor === "all" ? null : selectedColor;
 
-  const categoryOptions = [
-    ...new Set(products.map((product) => product.category)),
-  ];
+  const colorOptions = Array.from(
+    new Set(products.flatMap((product) => product.colorNames ?? [])),
+  ).sort(compareLabels);
 
   React.useEffect(() => {
     async function fetchProducts() {
@@ -70,94 +80,31 @@ export default function ProductsPage() {
       setPageError("");
       setPageSuccess("");
 
-      const [productsResponse, stockOwnersResponse] = await Promise.all([
-        supabase
-          .from("products")
-          .select(
-            `
-            id,
-            name,
-            slug,
-            price,
-            old_price,
-            cover_image_url,
-            is_active,
-            created_at,
-            categories (
-              name
-            ),
-            product_variants (
-              variant_inventory (
-                quantity,
-                stock_owners (
-                  name
-                )
-              )
-            )
-          `,
-          )
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("stock_owners")
-          .select("name")
-          .eq("is_active", true)
-          .order("name", { ascending: true }),
-      ]);
+      try {
+        const response = await fetch("/api/admin/products", {
+          cache: "no-store",
+        });
+        const result = await response.json();
 
-      if (productsResponse.error || stockOwnersResponse.error) {
+        if (!response.ok) {
+          throw new Error(result?.error || "Failed to load products.");
+        }
+
+        setProducts(result.products || []);
+        setAssigneeOptions(result.assigneeOptions || []);
+        setSizeOptions(result.sizeOptions || []);
+        setCategoryOptions(result.categoryOptions || []);
+      } catch (error) {
         setPageError(
-          productsResponse.error?.message ||
-            stockOwnersResponse.error?.message ||
-            "Failed to load products.",
+          error instanceof Error ? error.message : "Failed to load products.",
         );
+      } finally {
         setIsLoading(false);
-        return;
       }
-
-      const mappedProducts = (productsResponse.data || []).map((product) => {
-        const assignedOwners = Array.from(
-          new Set(
-            (product.product_variants ?? []).flatMap((variant) =>
-              (variant.variant_inventory ?? [])
-                .filter((inventoryRow) => Number(inventoryRow.quantity) > 0)
-                .map((inventoryRow) => inventoryRow.stock_owners?.name)
-                .filter(Boolean),
-            ),
-          ),
-        ).sort((firstOwner, secondOwner) =>
-          firstOwner.localeCompare(secondOwner),
-        );
-
-        return {
-          id: product.id,
-          name: product.name,
-          slug: product.slug,
-          price: product.price,
-          oldPrice: product.old_price,
-          image: product.cover_image_url,
-          category: product.categories?.name ?? "Sans categorie",
-          status: product.is_active ? "Active" : "Inactive",
-          createdAt: product.created_at,
-          assignedOwners,
-        };
-      });
-
-      const nextAssigneeOptions = Array.from(
-        new Set([
-          ...(stockOwnersResponse.data || [])
-            .map((owner) => owner.name?.trim())
-            .filter(Boolean),
-          ...mappedProducts.flatMap((product) => product.assignedOwners),
-        ]),
-      ).sort((firstOwner, secondOwner) => firstOwner.localeCompare(secondOwner));
-
-      setProducts(mappedProducts);
-      setAssigneeOptions(nextAssigneeOptions);
-      setIsLoading(false);
     }
 
     fetchProducts();
-  }, [supabase]);
+  }, []);
 
   React.useEffect(() => {
     if (
@@ -168,10 +115,46 @@ export default function ProductsPage() {
     }
   }, [assigneeOptions, selectedAssignee]);
 
+  React.useEffect(() => {
+    if (selectedCategory !== "all" && !categoryOptions.includes(selectedCategory)) {
+      setSelectedCategory("all");
+    }
+  }, [categoryOptions, selectedCategory]);
+
+  React.useEffect(() => {
+    if (selectedSize !== "all" && !sizeOptions.includes(selectedSize)) {
+      setSelectedSize("all");
+    }
+  }, [selectedSize, sizeOptions]);
+
+  React.useEffect(() => {
+    if (selectedColor !== "all" && !colorOptions.includes(selectedColor)) {
+      setSelectedColor("all");
+    }
+  }, [colorOptions, selectedColor]);
+
   function handleFilterIconPointerDown(event, clearFilter) {
     event.preventDefault();
     event.stopPropagation();
     clearFilter();
+  }
+
+  function renderFilterIndicator(selectedLabel, clearFilter) {
+    if (isLoading) {
+      return <Spinner size="sm" className="text-[#616669]" />;
+    }
+
+    if (selectedLabel) {
+      return (
+        <span
+          onPointerDown={(event) => handleFilterIconPointerDown(event, clearFilter)}
+          className="inline-flex size-4 cursor-pointer items-center justify-center">
+          <X size={15} color="#616669" strokeWidth={2.5} />
+        </span>
+      );
+    }
+
+    return <Plus size={15} color="#616669" strokeWidth={2.5} />;
   }
 
   async function handleToggleProductStatus(product) {
@@ -287,6 +270,12 @@ export default function ProductsPage() {
     const matchesStatus =
       selectedStatus === "all" || product.status === selectedStatus;
 
+    const matchesStock =
+      selectedStock === "all" ||
+      (selectedStock === "In stock"
+        ? product.availableQuantity > 0
+        : product.availableQuantity === 0);
+
     const matchesAssignee =
       selectedAssignee === "all" ||
       product.assignedOwners.includes(selectedAssignee);
@@ -294,7 +283,21 @@ export default function ProductsPage() {
     const matchesCategory =
       selectedCategory === "all" || product.category === selectedCategory;
 
-    return matchesSearch && matchesStatus && matchesAssignee && matchesCategory;
+    const matchesSize =
+      selectedSize === "all" || product.sizeNames.includes(selectedSize);
+
+    const matchesColor =
+      selectedColor === "all" || product.colorNames.includes(selectedColor);
+
+    return (
+      matchesSearch &&
+      matchesStatus &&
+      matchesStock &&
+      matchesAssignee &&
+      matchesCategory &&
+      matchesSize &&
+      matchesColor
+    );
   });
 
   return (
@@ -329,35 +332,34 @@ export default function ProductsPage() {
 
       <div className="relative w-full max-w-sm">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+        {isLoading ? (
+          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+            <Spinner size="sm" className="text-[#616669]" />
+          </div>
+        ) : null}
         <Input
           type="search"
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
+          disabled={isLoading}
           placeholder="Rechercher un produit..."
-          className="h-10 cursor-pointer rounded-xl border-slate-200 bg-white pl-9 text-sm text-slate-700 shadow-none"
+          className="h-10 cursor-pointer rounded-xl border-slate-200 bg-white pl-9 pr-9 text-sm text-slate-700 shadow-none"
         />
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+        <Select
+          value={selectedStatus}
+          onValueChange={setSelectedStatus}
+          disabled={isLoading}>
           <SelectTrigger
             className={cn(
               filterTriggerClass,
               selectedStatusLabel && activeFilterTriggerClass,
             )}>
             <div className="flex items-center gap-1">
-              {selectedStatusLabel ? (
-                <span
-                  onPointerDown={(event) =>
-                    handleFilterIconPointerDown(event, () =>
-                      setSelectedStatus("all"),
-                    )
-                  }
-                  className="inline-flex size-4 cursor-pointer items-center justify-center">
-                  <X size={15} color="#616669" strokeWidth={2.5} />
-                </span>
-              ) : (
-                <Plus size={15} color="#616669" strokeWidth={2.5} />
+              {renderFilterIndicator(selectedStatusLabel, () =>
+                setSelectedStatus("all"),
               )}
               <span>Status</span>
               {selectedStatusLabel ? (
@@ -387,25 +389,18 @@ export default function ProductsPage() {
           </SelectContent>
         </Select>
 
-        <Select value={selectedAssignee} onValueChange={setSelectedAssignee}>
+        <Select
+          value={selectedAssignee}
+          onValueChange={setSelectedAssignee}
+          disabled={isLoading}>
           <SelectTrigger
             className={cn(
               filterTriggerClass,
               selectedAssigneeLabel && activeFilterTriggerClass,
             )}>
             <div className="flex items-center gap-1">
-              {selectedAssigneeLabel ? (
-                <span
-                  onPointerDown={(event) =>
-                    handleFilterIconPointerDown(event, () =>
-                      setSelectedAssignee("all"),
-                    )
-                  }
-                  className="inline-flex size-4 cursor-pointer items-center justify-center">
-                  <X size={15} color="#616669" strokeWidth={2.5} />
-                </span>
-              ) : (
-                <Plus size={15} color="#616669" strokeWidth={2.5} />
+              {renderFilterIndicator(selectedAssigneeLabel, () =>
+                setSelectedAssignee("all"),
               )}
               <span>Assignee</span>
               {selectedAssigneeLabel ? (
@@ -437,25 +432,59 @@ export default function ProductsPage() {
           </SelectContent>
         </Select>
 
-        <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+        <Select
+          value={selectedStock}
+          onValueChange={setSelectedStock}
+          disabled={isLoading}>
+          <SelectTrigger
+            className={cn(
+              filterTriggerClass,
+              selectedStockLabel && activeFilterTriggerClass,
+            )}>
+            <div className="flex items-center gap-1">
+              {renderFilterIndicator(selectedStockLabel, () =>
+                setSelectedStock("all"),
+              )}
+              <span>Stock</span>
+              {selectedStockLabel ? (
+                <>
+                  <span className="text-[#61666966]">|</span>
+                  <span className="text-[#081c16]">{selectedStockLabel}</span>
+                </>
+              ) : null}
+            </div>
+          </SelectTrigger>
+
+          <SelectContent
+            align="start"
+            position="popper"
+            side="bottom"
+            sideOffset={6}
+            className={simpleDropdownClass}>
+            <SelectItem className={selectItemClass} value="all">
+              Tout le stock
+            </SelectItem>
+            <SelectItem className={selectItemClass} value="In stock">
+              In stock
+            </SelectItem>
+            <SelectItem className={selectItemClass} value="Out of stock">
+              Out of stock
+            </SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={selectedCategory}
+          onValueChange={setSelectedCategory}
+          disabled={isLoading}>
           <SelectTrigger
             className={cn(
               filterTriggerClass,
               selectedCategoryLabel && activeFilterTriggerClass,
             )}>
             <div className="flex items-center gap-1">
-              {selectedCategoryLabel ? (
-                <span
-                  onPointerDown={(event) =>
-                    handleFilterIconPointerDown(event, () =>
-                      setSelectedCategory("all"),
-                    )
-                  }
-                  className="inline-flex size-4 cursor-pointer items-center justify-center">
-                  <X size={15} color="#616669" strokeWidth={2.5} />
-                </span>
-              ) : (
-                <Plus size={15} color="#616669" strokeWidth={2.5} />
+              {renderFilterIndicator(selectedCategoryLabel, () =>
+                setSelectedCategory("all"),
               )}
               <span>Categorie</span>
               {selectedCategoryLabel ? (
@@ -484,6 +513,89 @@ export default function ProductsPage() {
                 className={selectItemClass}
                 value={category}>
                 {category}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={selectedSize}
+          onValueChange={setSelectedSize}
+          disabled={isLoading}>
+          <SelectTrigger
+            className={cn(
+              filterTriggerClass,
+              selectedSizeLabel && activeFilterTriggerClass,
+            )}>
+            <div className="flex items-center gap-1">
+              {renderFilterIndicator(selectedSizeLabel, () =>
+                setSelectedSize("all"),
+              )}
+              <span>Size</span>
+              {selectedSizeLabel ? (
+                <>
+                  <span className="text-[#61666966]">|</span>
+                  <span className="text-[#081c16]">{selectedSizeLabel}</span>
+                </>
+              ) : null}
+            </div>
+          </SelectTrigger>
+
+          <SelectContent
+            align="start"
+            position="popper"
+            side="bottom"
+            sideOffset={6}
+            className={simpleDropdownClass}>
+            <SelectItem className={selectItemClass} value="all">
+              Toutes les tailles
+            </SelectItem>
+            {sizeOptions.map((size) => (
+              <SelectItem key={size} className={selectItemClass} value={size}>
+                {size}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={selectedColor}
+          onValueChange={setSelectedColor}
+          disabled={isLoading}>
+          <SelectTrigger
+            className={cn(
+              filterTriggerClass,
+              selectedColorLabel && activeFilterTriggerClass,
+            )}>
+            <div className="flex items-center gap-1">
+              {renderFilterIndicator(selectedColorLabel, () =>
+                setSelectedColor("all"),
+              )}
+              <span>Color</span>
+              {selectedColorLabel ? (
+                <>
+                  <span className="text-[#61666966]">|</span>
+                  <span className="text-[#081c16]">{selectedColorLabel}</span>
+                </>
+              ) : null}
+            </div>
+          </SelectTrigger>
+
+          <SelectContent
+            align="start"
+            position="popper"
+            side="bottom"
+            sideOffset={6}
+            className={simpleDropdownClass}>
+            <SelectItem className={selectItemClass} value="all">
+              Toutes les couleurs
+            </SelectItem>
+            {colorOptions.map((color) => (
+              <SelectItem
+                key={color}
+                className={selectItemClass}
+                value={color}>
+                {color}
               </SelectItem>
             ))}
           </SelectContent>
@@ -524,9 +636,14 @@ export default function ProductsPage() {
               disabled={activeAction?.type === "delete"}
               onClick={handleConfirmDeleteProduct}
               className="rounded-xl">
-              {activeAction?.type === "delete"
-                ? "Suppression..."
-                : "Supprimer"}
+              {activeAction?.type === "delete" ? (
+                <span className="flex items-center gap-2">
+                  <Spinner size="sm" className="text-current" />
+                  <span>Suppression...</span>
+                </span>
+              ) : (
+                "Supprimer"
+              )}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

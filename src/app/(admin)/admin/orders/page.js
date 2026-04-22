@@ -1,9 +1,14 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { format, subDays } from "date-fns";
 import { CalendarDays, Plus, Search, Truck, X } from "lucide-react";
 
+import {
+  getOrderStatusLabel,
+  ORDER_STATUS_OPTIONS,
+} from "@/components/orders/order-columns";
 import { OrdersDataTable } from "@/components/orders/orders-data-table";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -27,11 +32,10 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
 import { SHOP_OWNERS } from "@/app/(admin)/admin/shared/shop-owners";
-
-import { orders } from "./data";
 
 const DATE_SHORTCUTS = [
   {
@@ -83,7 +87,252 @@ function formatDateRangeLabel(range) {
   return `${format(range.from, "LLL dd, y")} - ${format(range.to, "LLL dd, y")}`;
 }
 
-export default function Orders() {
+function formatOrderItemLabel(item) {
+  const parts = [item.product_name];
+
+  if (item.color_name) {
+    parts.push(item.color_name);
+  }
+
+  if (item.size_name) {
+    parts.push(item.size_name);
+  }
+
+  const label = parts.filter(Boolean).join(" / ");
+
+  if (Number(item.quantity) > 1) {
+    return `${label} x${item.quantity}`;
+  }
+
+  return label;
+}
+
+function getReservationQuantitiesByOwnerId(orderItem) {
+  return new Map(
+    (orderItem.order_item_reservations ?? []).map((reservation) => [
+      reservation.stock_owner_id,
+      Number(reservation.quantity) || 0,
+    ]),
+  );
+}
+
+function createOrderVariantReservationKey(orderId, variantId) {
+  return `${orderId}:${variantId}`;
+}
+
+function createInventoryRowsByVariantId(inventoryRows) {
+  return (inventoryRows ?? []).reduce((variantsMap, inventoryRow) => {
+    const variantId = inventoryRow.variant_id;
+    const stockOwnerId = inventoryRow.stock_owner_id;
+
+    if (!variantId || !stockOwnerId) {
+      return variantsMap;
+    }
+
+    if (!variantsMap.has(variantId)) {
+      variantsMap.set(variantId, new Map());
+    }
+
+    variantsMap.get(variantId).set(stockOwnerId, inventoryRow);
+    return variantsMap;
+  }, new Map());
+}
+
+function buildOrderVariantReservationMap(orders) {
+  return (orders ?? []).reduce((variantsMap, order) => {
+    for (const orderItem of order.order_items ?? []) {
+      if (orderItem.assigned_stock_owner_id || !orderItem.variant_id) {
+        continue;
+      }
+
+      const reservationKey = createOrderVariantReservationKey(
+        order.id,
+        orderItem.variant_id,
+      );
+
+      if (!variantsMap.has(reservationKey)) {
+        variantsMap.set(reservationKey, new Map());
+      }
+
+      const ownerReservationsMap = variantsMap.get(reservationKey);
+
+      for (const [stockOwnerId, quantity] of getReservationQuantitiesByOwnerId(
+        orderItem,
+      )) {
+        ownerReservationsMap.set(
+          stockOwnerId,
+          (ownerReservationsMap.get(stockOwnerId) ?? 0) + quantity,
+        );
+      }
+    }
+
+    return variantsMap;
+  }, new Map());
+}
+
+function getOrderItemOwnerOptions(
+  orderId,
+  orderItem,
+  stockOwners,
+  inventoryRowsByVariantId,
+  orderVariantReservationMap,
+) {
+  const assignedOwnerId = orderItem.assigned_stock_owner_id ?? null;
+  const inventoryRowsByOwnerId =
+    inventoryRowsByVariantId.get(orderItem.variant_id) ?? new Map();
+  const variantReservationsByOwnerId =
+    orderVariantReservationMap.get(
+      createOrderVariantReservationKey(orderId, orderItem.variant_id),
+    ) ?? new Map();
+
+  return stockOwners.map((owner) => {
+    const inventoryRow = inventoryRowsByOwnerId.get(owner.id);
+    const reservedForCurrentVariant =
+      variantReservationsByOwnerId.get(owner.id) ?? 0;
+    const availableQuantity = inventoryRow
+      ? Number(inventoryRow.quantity || 0) -
+        Number(inventoryRow.reserved_quantity || 0) +
+        reservedForCurrentVariant
+      : 0;
+    const canAssign =
+      owner.id === assignedOwnerId ||
+      availableQuantity >= Number(orderItem.quantity || 0);
+
+    return {
+      value: owner.name,
+      label: owner.name,
+      canAssign,
+      statusLabel: canAssign ? "" : "Out of stock",
+    };
+  });
+}
+
+function mapOrderItem(
+  orderId,
+  orderItem,
+  stockOwners,
+  stockOwnersById,
+  inventoryRowsByVariantId,
+  orderVariantReservationMap,
+  assignmentHistoryOrderItemIds,
+) {
+  const ownerOptions = getOrderItemOwnerOptions(
+    orderId,
+    orderItem,
+    stockOwners,
+    inventoryRowsByVariantId,
+    orderVariantReservationMap,
+  );
+  const owner = stockOwnersById.get(orderItem.assigned_stock_owner_id) ?? "";
+
+  return {
+    id: orderItem.id,
+    variantId: orderItem.variant_id,
+    label: formatOrderItemLabel(orderItem),
+    quantity: Number(orderItem.quantity) || 0,
+    owner,
+    suggestedOwner: "",
+    hasAssignmentHistory: assignmentHistoryOrderItemIds.has(orderItem.id),
+    ownerOptions,
+  };
+}
+
+function buildDeliveryAddress(order) {
+  return [order.address, order.commune, order.wilaya].filter(Boolean).join(", ");
+}
+
+function buildOwnerSummary(orderItems) {
+  const assignedOwners = Array.from(
+    new Set(orderItems.map((orderItem) => orderItem.owner).filter(Boolean)),
+  );
+
+  if (!assignedOwners.length) {
+    return "";
+  }
+
+  if (assignedOwners.length === 1) {
+    return assignedOwners[0];
+  }
+
+  return `${assignedOwners[0]} +${assignedOwners.length - 1}`;
+}
+
+function mapOrderRow(
+  order,
+  stockOwners,
+  stockOwnersById,
+  inventoryRowsByVariantId,
+  orderVariantReservationMap,
+  assignmentHistoryOrderItemIds,
+) {
+  const orderItems = (order.order_items ?? []).map((orderItem) =>
+    mapOrderItem(
+      order.id,
+      orderItem,
+      stockOwners,
+      stockOwnersById,
+      inventoryRowsByVariantId,
+      orderVariantReservationMap,
+      assignmentHistoryOrderItemIds,
+    ),
+  );
+  const resolvedOrderItems =
+    orderItems.length === 1 && !orderItems[0].owner
+      ? (() => {
+          const eligibleOwners = orderItems[0].ownerOptions.filter(
+            (option) => option.canAssign,
+          );
+
+          if (eligibleOwners.length !== 1) {
+            return orderItems;
+          }
+
+          return [
+            {
+              ...orderItems[0],
+              suggestedOwner: eligibleOwners[0].value,
+            },
+          ];
+        })()
+      : orderItems;
+  const ownerNames = Array.from(
+    new Set(
+      resolvedOrderItems.map((orderItem) => orderItem.owner).filter(Boolean),
+    ),
+  );
+
+  return {
+    id: order.id,
+    orderNumber: order.order_number,
+    date: order.created_at,
+    client: order.customer_name,
+    clientPhone: order.customer_phone,
+    orderItems: resolvedOrderItems,
+    products: resolvedOrderItems.map((orderItem) => orderItem.label),
+    deliveryAddress: buildDeliveryAddress(order),
+    deliveryMethod: order.shipping_method === "desk" ? "desk" : "home",
+    deliveryMethodLabel:
+      order.shipping_method === "desk" ? "Store Pickup" : "Home Delivery",
+    status: order.status || "pending",
+    totalPrice: Number(order.total_amount) || 0,
+    owner: buildOwnerSummary(resolvedOrderItems),
+    ownerNames,
+    isFullyAssigned:
+      resolvedOrderItems.length > 0 &&
+      resolvedOrderItems.every((orderItem) => Boolean(orderItem.owner)),
+  };
+}
+
+export default function OrdersPage() {
+  const supabase = React.useMemo(() => createClient(), []);
+  const attemptedAutoAssignmentIdsRef = React.useRef(new Set());
+  const attemptedSplitOrderItemIdsRef = React.useRef(new Set());
+
+  const [orders, setOrders] = React.useState([]);
+  const [assigneeOptions, setAssigneeOptions] = React.useState(SHOP_OWNERS);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [pageError, setPageError] = React.useState("");
+
   const [searchQuery, setSearchQuery] = React.useState("");
   const [dateRange, setDateRange] = React.useState();
   const [draftDateRange, setDraftDateRange] = React.useState();
@@ -97,6 +346,8 @@ export default function Orders() {
   const [selectedStatus, setSelectedStatus] = React.useState("all");
   const [selectedDeliveryType, setSelectedDeliveryType] = React.useState("all");
   const [selectedAssignee, setSelectedAssignee] = React.useState("all");
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
   const deferredSearchQuery = React.useDeferredValue(searchQuery);
   const filterTriggerClass =
     "h-9 w-[190px] cursor-pointer rounded-2xl border border-dashed border-[#61666942] bg-white px-2 text-sm font-medium text-[#616669] shadow-none hover:bg-white focus-visible:ring-0 focus-visible:border-[#61666942] data-[state=open]:bg-white [&_svg:last-child]:text-[#616669]";
@@ -107,7 +358,8 @@ export default function Orders() {
     "rounded-2xl border border-slate-200 bg-white p-1.5 text-[#081c16] shadow-sm";
   const selectItemClass =
     "cursor-pointer rounded-xl px-3 py-2 text-sm text-[#081c16] focus:bg-black! focus:text-white! focus:[&_svg]:text-white! focus:[&_span]:text-white! hover:bg-black! hover:text-white! hover:[&_svg]:text-white! hover:[&_span]:text-white!";
-  const selectedStatusLabel = selectedStatus === "all" ? null : selectedStatus;
+  const selectedStatusLabel =
+    selectedStatus === "all" ? null : getOrderStatusLabel(selectedStatus);
   const selectedDeliveryLabel =
     selectedDeliveryType === "all"
       ? null
@@ -121,6 +373,279 @@ export default function Orders() {
   const selectedDateLabel = formatDateRangeLabel(dateRange);
   const canDispatchSelectedOrders =
     selectedDispatchAccount !== "all" && selectedDispatchOrderIds.length > 0;
+
+  React.useEffect(() => {
+    async function fetchOrders() {
+      setIsLoading(true);
+      setPageError("");
+
+      const [ordersResponse, stockOwnersResponse] = await Promise.all([
+        supabase
+          .from("orders")
+          .select(
+            `
+            id,
+            order_number,
+            customer_name,
+            customer_phone,
+            wilaya,
+            commune,
+            address,
+            status,
+            shipping_method,
+            total_amount,
+            created_at,
+            assigned_stock_owner_id,
+            order_items (
+              id,
+              variant_id,
+              product_name,
+              color_name,
+              size_name,
+              quantity,
+              assigned_stock_owner_id,
+              order_item_reservations (
+                stock_owner_id,
+                quantity
+              )
+            )
+          `,
+          )
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("stock_owners")
+          .select("id, name")
+          .eq("is_active", true)
+          .order("name", { ascending: true }),
+      ]);
+
+      if (ordersResponse.error || stockOwnersResponse.error) {
+        setPageError(
+          ordersResponse.error?.message ||
+            stockOwnersResponse.error?.message ||
+            "Failed to load orders.",
+        );
+        setOrders([]);
+        setIsLoading(false);
+        return;
+      }
+
+      const splitCandidates = (ordersResponse.data ?? []).flatMap((order) =>
+        (order.order_items ?? [])
+          .filter(
+            (orderItem) =>
+              Number(orderItem.quantity) > 1 &&
+              !orderItem.assigned_stock_owner_id &&
+              !attemptedSplitOrderItemIdsRef.current.has(orderItem.id),
+          )
+          .map((orderItem) => ({
+            orderId: order.id,
+            orderItemId: orderItem.id,
+          })),
+      );
+
+      if (splitCandidates.length) {
+        const splitResponses = await Promise.all(
+          splitCandidates.map(async (candidate) => {
+            attemptedSplitOrderItemIdsRef.current.add(candidate.orderItemId);
+
+            const response = await fetch(
+              `/api/orders/${candidate.orderId}/items/${candidate.orderItemId}/split`,
+              {
+                method: "POST",
+              },
+            );
+            const result = await response.json().catch(() => null);
+
+            return {
+              ok: response.ok,
+              error: result?.error || "",
+            };
+          }),
+        );
+        const failedSplitResponse = splitResponses.find((response) => !response.ok);
+
+        if (failedSplitResponse) {
+          setPageError(failedSplitResponse.error || "Failed to split order items.");
+          setOrders([]);
+          setIsLoading(false);
+          return;
+        }
+
+        setRefreshKey((currentValue) => currentValue + 1);
+        return;
+      }
+
+      const variantIds = Array.from(
+        new Set(
+          (ordersResponse.data ?? []).flatMap((order) =>
+            (order.order_items ?? [])
+              .map((orderItem) => orderItem.variant_id)
+              .filter(Boolean),
+          ),
+        ),
+      );
+      let inventoryRows = [];
+      let assignmentHistoryOrderItemIds = new Set();
+
+      if (variantIds.length) {
+        const variantInventoryResponse = await supabase
+          .from("variant_inventory")
+          .select("variant_id, stock_owner_id, quantity, reserved_quantity")
+          .in("variant_id", variantIds);
+
+        if (variantInventoryResponse.error) {
+          setPageError(variantInventoryResponse.error.message);
+          setOrders([]);
+          setIsLoading(false);
+          return;
+        }
+
+        inventoryRows = variantInventoryResponse.data ?? [];
+      }
+
+      const orderItemIds = Array.from(
+        new Set(
+          (ordersResponse.data ?? []).flatMap((order) =>
+            (order.order_items ?? []).map((orderItem) => orderItem.id).filter(Boolean),
+          ),
+        ),
+      );
+
+      if (orderItemIds.length) {
+        const assignmentHistoryResponse = await supabase
+          .from("stock_movements")
+          .select("order_item_id")
+          .in("order_item_id", orderItemIds)
+          .in("movement_type", ["sale", "return"]);
+
+        if (assignmentHistoryResponse.error) {
+          setPageError(assignmentHistoryResponse.error.message);
+          setOrders([]);
+          setIsLoading(false);
+          return;
+        }
+
+        assignmentHistoryOrderItemIds = new Set(
+          (assignmentHistoryResponse.data ?? [])
+            .map((row) => row.order_item_id)
+            .filter(Boolean),
+        );
+      }
+
+      const stockOwners = stockOwnersResponse.data ?? [];
+      const stockOwnersById = new Map(
+        stockOwners.map((owner) => [owner.id, owner.name]),
+      );
+      const inventoryRowsByVariantId = createInventoryRowsByVariantId(inventoryRows);
+      const orderVariantReservationMap = buildOrderVariantReservationMap(
+        ordersResponse.data ?? [],
+      );
+      const mappedOrders = (ordersResponse.data ?? []).map((order) =>
+        mapOrderRow(
+          order,
+          stockOwners,
+          stockOwnersById,
+          inventoryRowsByVariantId,
+          orderVariantReservationMap,
+          assignmentHistoryOrderItemIds,
+        ),
+      );
+      const nextAssigneeOptions = Array.from(
+        new Set([
+          ...SHOP_OWNERS,
+          ...stockOwners
+            .map((owner) => owner.name?.trim())
+            .filter(Boolean),
+          ...mappedOrders.flatMap((order) => order.ownerNames),
+        ]),
+      ).sort((firstOwner, secondOwner) => firstOwner.localeCompare(secondOwner));
+
+      setOrders(mappedOrders);
+      setAssigneeOptions(nextAssigneeOptions);
+      setIsLoading(false);
+    }
+
+    fetchOrders();
+  }, [refreshKey, supabase]);
+
+  React.useEffect(() => {
+    if (
+      selectedAssignee !== "all" &&
+      !assigneeOptions.includes(selectedAssignee)
+    ) {
+      setSelectedAssignee("all");
+    }
+  }, [assigneeOptions, selectedAssignee]);
+
+  React.useEffect(() => {
+    const autoAssignableItems = orders.flatMap((order) => {
+      if (order.orderItems.length !== 1) {
+        return [];
+      }
+
+      const [orderItem] = order.orderItems;
+
+      if (
+        !orderItem ||
+        orderItem.owner ||
+        !orderItem.suggestedOwner ||
+        orderItem.hasAssignmentHistory ||
+        attemptedAutoAssignmentIdsRef.current.has(orderItem.id)
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          orderId: order.id,
+          orderItemId: orderItem.id,
+          ownerName: orderItem.suggestedOwner,
+        },
+      ];
+    });
+
+    if (!autoAssignableItems.length) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function autoAssignOrders() {
+      let shouldRefresh = false;
+
+      for (const item of autoAssignableItems) {
+        attemptedAutoAssignmentIdsRef.current.add(item.orderItemId);
+
+        const response = await fetch(
+          `/api/orders/${item.orderId}/items/${item.orderItemId}/assign`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              ownerName: item.ownerName,
+            }),
+          },
+        );
+
+        if (response.ok) {
+          shouldRefresh = true;
+        }
+      }
+
+      if (!cancelled && shouldRefresh) {
+        setRefreshKey((currentValue) => currentValue + 1);
+      }
+    }
+
+    autoAssignOrders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orders]);
 
   function handleDatePopoverOpenChange(nextOpen) {
     setIsDatePopoverOpen(nextOpen);
@@ -147,6 +672,24 @@ export default function Orders() {
     clearFilter();
   }
 
+  function renderFilterIndicator(selectedLabel, clearFilter) {
+    if (isLoading) {
+      return <Spinner size="sm" className="text-[#616669]" />;
+    }
+
+    if (selectedLabel) {
+      return (
+        <span
+          onPointerDown={(event) => handleFilterIconPointerDown(event, clearFilter)}
+          className="inline-flex size-4 cursor-pointer items-center justify-center">
+          <X size={15} color="#616669" strokeWidth={2.5} />
+        </span>
+      );
+    }
+
+    return <Plus size={15} color="#616669" strokeWidth={2.5} />;
+  }
+
   function handleDispatchModeToggle() {
     setIsDispatchMode((currentValue) => !currentValue);
   }
@@ -157,6 +700,16 @@ export default function Orders() {
     }
 
     setDispatchSubmissionId((currentValue) => currentValue + 1);
+  }
+
+  async function handleRefreshOrders(options = {}) {
+    const skipAutoAssignOrderItemId = options?.skipAutoAssignOrderItemId;
+
+    if (skipAutoAssignOrderItemId) {
+      attemptedAutoAssignmentIdsRef.current.add(skipAutoAssignOrderItemId);
+    }
+
+    setRefreshKey((currentValue) => currentValue + 1);
   }
 
   return (
@@ -184,12 +737,21 @@ export default function Orders() {
           </button>
         </div>
       </div>
+
       <Separator />
+
+      {pageError ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {pageError}
+        </div>
+      ) : null}
+
       {isDispatchMode ? (
         <div className="flex flex-wrap items-center gap-3">
           <Select
             value={selectedDispatchAccount}
-            onValueChange={setSelectedDispatchAccount}>
+            onValueChange={setSelectedDispatchAccount}
+            disabled={isLoading}>
             <SelectTrigger
               className={cn(
                 filterTriggerClass,
@@ -197,18 +759,8 @@ export default function Orders() {
                 selectedDispatchAccountLabel && activeFilterTriggerClass,
               )}>
               <div className="flex items-center gap-1">
-                {selectedDispatchAccountLabel ? (
-                  <span
-                    onPointerDown={(event) =>
-                      handleFilterIconPointerDown(event, () =>
-                        setSelectedDispatchAccount("all"),
-                      )
-                    }
-                    className="inline-flex size-4 cursor-pointer items-center justify-center">
-                    <X size={15} color="#616669" strokeWidth={2.5} />
-                  </span>
-                ) : (
-                  <Plus size={15} color="#616669" strokeWidth={2.5} />
+                {renderFilterIndicator(selectedDispatchAccountLabel, () =>
+                  setSelectedDispatchAccount("all"),
                 )}
                 <span>Compte livraison</span>
                 {selectedDispatchAccountLabel ? (
@@ -230,8 +782,11 @@ export default function Orders() {
               <SelectItem className={selectItemClass} value="all">
                 Selectionner un compte
               </SelectItem>
-              {SHOP_OWNERS.map((owner) => (
-                <SelectItem key={owner} className={selectItemClass} value={owner}>
+              {assigneeOptions.map((owner) => (
+                <SelectItem
+                  key={owner}
+                  className={selectItemClass}
+                  value={owner}>
                   {owner}
                 </SelectItem>
               ))}
@@ -240,7 +795,7 @@ export default function Orders() {
           <button
             type="button"
             onClick={handleDispatchOrders}
-            disabled={!canDispatchSelectedOrders}
+            disabled={!canDispatchSelectedOrders || isLoading}
             className="h-9 cursor-pointer whitespace-nowrap rounded-sm bg-[#081c16] px-4 text-sm font-medium text-white transition-colors hover:bg-[#081c16]/90 disabled:cursor-not-allowed disabled:bg-[#081c16]/35">
             Dispatcher
           </button>
@@ -249,12 +804,18 @@ export default function Orders() {
         <>
           <div className="relative w-full max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            {isLoading ? (
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                <Spinner size="sm" className="text-[#616669]" />
+              </div>
+            ) : null}
             <Input
               type="search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
+              disabled={isLoading}
               placeholder="Rechercher client ou telephone..."
-              className="h-10 cursor-pointer rounded-xl border-slate-200 bg-white pl-9 text-sm text-slate-700 shadow-none"
+              className="h-10 cursor-pointer rounded-xl border-slate-200 bg-white pl-9 pr-9 text-sm text-slate-700 shadow-none"
             />
           </div>
           <div className="flex flex-wrap gap-3">
@@ -262,11 +823,16 @@ export default function Orders() {
               <DialogTrigger asChild>
                 <button
                   type="button"
+                  disabled={isLoading}
                   className={cn(
                     "flex items-center gap-1 justify-start",
                     filterTriggerClass,
                   )}>
-                  <Plus size={15} color="#616669" strokeWidth={2.5} />
+                  {isLoading ? (
+                    <Spinner size="sm" className="text-[#616669]" />
+                  ) : (
+                    <Plus size={15} color="#616669" strokeWidth={2.5} />
+                  )}
                   <span>Product</span>
                 </button>
               </DialogTrigger>
@@ -283,7 +849,10 @@ export default function Orders() {
               </DialogContent>
             </Dialog>
 
-            <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+            <Select
+              value={selectedStatus}
+              onValueChange={setSelectedStatus}
+              disabled={isLoading}>
               <SelectTrigger
                 className={cn(
                   "cursor-pointer",
@@ -291,18 +860,8 @@ export default function Orders() {
                   selectedStatusLabel && activeFilterTriggerClass,
                 )}>
                 <div className="flex items-center gap-1">
-                  {selectedStatusLabel ? (
-                    <span
-                      onPointerDown={(event) =>
-                        handleFilterIconPointerDown(event, () =>
-                          setSelectedStatus("all"),
-                        )
-                      }
-                      className="inline-flex size-4 cursor-pointer items-center justify-center">
-                      <X size={15} color="#616669" strokeWidth={2.5} />
-                    </span>
-                  ) : (
-                    <Plus size={15} color="#616669" strokeWidth={2.5} />
+                  {renderFilterIndicator(selectedStatusLabel, () =>
+                    setSelectedStatus("all"),
                   )}
                   <span>Status</span>
                   {selectedStatusLabel ? (
@@ -322,44 +881,31 @@ export default function Orders() {
                 sideOffset={6}
                 className={simpleDropdownClass}>
                 <SelectItem className={selectItemClass} value="all">
-                  Tous les status
+                  Tous les statuts
                 </SelectItem>
-                <SelectItem className={selectItemClass} value="En attente">
-                  En attente
-                </SelectItem>
-                <SelectItem className={selectItemClass} value="Confirme">
-                  Confirme
-                </SelectItem>
-                <SelectItem className={selectItemClass} value="Annuler">
-                  Annuler
-                </SelectItem>
-                <SelectItem className={selectItemClass} value="Programme">
-                  Programme
-                </SelectItem>
+                {ORDER_STATUS_OPTIONS.map((status) => (
+                  <SelectItem
+                    key={status.value}
+                    className={selectItemClass}
+                    value={status.value}>
+                    {status.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
             <Select
               value={selectedAssignee}
-              onValueChange={setSelectedAssignee}>
+              onValueChange={setSelectedAssignee}
+              disabled={isLoading}>
               <SelectTrigger
                 className={cn(
                   filterTriggerClass,
                   selectedAssigneeLabel && activeFilterTriggerClass,
                 )}>
                 <div className="flex items-center gap-1">
-                  {selectedAssigneeLabel ? (
-                    <span
-                      onPointerDown={(event) =>
-                        handleFilterIconPointerDown(event, () =>
-                          setSelectedAssignee("all"),
-                        )
-                      }
-                      className="inline-flex size-4 cursor-pointer items-center justify-center">
-                      <X size={15} color="#616669" strokeWidth={2.5} />
-                    </span>
-                  ) : (
-                    <Plus size={15} color="#616669" strokeWidth={2.5} />
+                  {renderFilterIndicator(selectedAssigneeLabel, () =>
+                    setSelectedAssignee("all"),
                   )}
                   <span>Assignee</span>
                   {selectedAssigneeLabel ? (
@@ -378,38 +924,32 @@ export default function Orders() {
                 side="bottom"
                 sideOffset={6}
                 className={simpleDropdownClass}>
-              <SelectItem className={selectItemClass} value="all">
-                All assignees
-              </SelectItem>
-              {SHOP_OWNERS.map((owner) => (
-                <SelectItem key={owner} className={selectItemClass} value={owner}>
-                  {owner}
+                <SelectItem className={selectItemClass} value="all">
+                  Tous les assignees
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                {assigneeOptions.map((owner) => (
+                  <SelectItem
+                    key={owner}
+                    className={selectItemClass}
+                    value={owner}>
+                    {owner}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <Select
               value={selectedDeliveryType}
-              onValueChange={setSelectedDeliveryType}>
+              onValueChange={setSelectedDeliveryType}
+              disabled={isLoading}>
               <SelectTrigger
                 className={cn(
                   filterTriggerClass,
                   selectedDeliveryLabel && activeFilterTriggerClass,
                 )}>
                 <div className="flex items-center gap-1">
-                  {selectedDeliveryLabel ? (
-                    <span
-                      onPointerDown={(event) =>
-                        handleFilterIconPointerDown(event, () =>
-                          setSelectedDeliveryType("all"),
-                        )
-                      }
-                      className="inline-flex size-4 cursor-pointer items-center justify-center">
-                      <X size={15} color="#616669" strokeWidth={2.5} />
-                    </span>
-                  ) : (
-                    <Plus size={15} color="#616669" strokeWidth={2.5} />
+                  {renderFilterIndicator(selectedDeliveryLabel, () =>
+                    setSelectedDeliveryType("all"),
                   )}
                   <span>Livraison</span>
                   {selectedDeliveryLabel ? (
@@ -446,23 +986,14 @@ export default function Orders() {
               <PopoverTrigger asChild>
                 <button
                   type="button"
+                  disabled={isLoading}
                   className={cn(
                     "flex items-center gap-1 justify-start",
                     filterTriggerClass,
                     selectedDateLabel && activeFilterTriggerClass,
                     !dateRange && "text-[#616669]",
                   )}>
-                  {selectedDateLabel ? (
-                    <span
-                      onPointerDown={(event) =>
-                        handleFilterIconPointerDown(event, handleClearDate)
-                      }
-                      className="inline-flex size-4 cursor-pointer items-center justify-center">
-                      <X size={15} color="#616669" strokeWidth={2.5} />
-                    </span>
-                  ) : (
-                    <Plus size={15} color="#616669" strokeWidth={2.5} />
-                  )}
+                  {renderFilterIndicator(selectedDateLabel, handleClearDate)}
                   <CalendarDays className="size-4 text-[#616669]" />
                   <span>Date</span>
                   {selectedDateLabel ? (
@@ -543,8 +1074,10 @@ export default function Orders() {
           </div>
         </>
       )}
+
       <OrdersDataTable
         data={orders}
+        isLoading={isLoading}
         searchQuery={isDispatchMode ? "" : deferredSearchQuery}
         selectedStatus={isDispatchMode ? "all" : selectedStatus}
         selectedAssignee={isDispatchMode ? "all" : selectedAssignee}
@@ -553,7 +1086,9 @@ export default function Orders() {
         isDispatchMode={isDispatchMode}
         dispatchAccount={selectedDispatchAccount}
         dispatchSubmissionId={dispatchSubmissionId}
+        assigneeOptions={assigneeOptions}
         onDispatchSelectionChange={setSelectedDispatchOrderIds}
+        onRefreshOrders={handleRefreshOrders}
       />
     </section>
   );

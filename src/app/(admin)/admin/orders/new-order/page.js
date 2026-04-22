@@ -1,21 +1,27 @@
 "use client";
 
-import { useRef, useState } from "react";
+import * as React from "react";
+import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Building2,
   Check,
-  ChevronRight,
   ChevronDown,
+  ChevronRight,
+  CreditCard,
   House,
   Package,
   Search,
   Store,
+  Trash2,
   User,
-  CreditCard,
+  X,
 } from "lucide-react";
 
 import algeriaCities from "@/lib/algeria_cities.json";
+import { formatPrice } from "@/lib/format-price";
+import { useShippingRates } from "@/hooks/use-shipping-rates";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,14 +39,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { SHOP_OWNERS } from "@/app/(admin)/admin/shared/shop-owners";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 
 const EMPTY_CUSTOMER = {
   name: "",
@@ -55,12 +55,6 @@ const adminDialogInputClass =
   "h-10 rounded-xl border-slate-200 bg-white px-4 text-sm text-[#081c16] shadow-none placeholder:text-[#616669]/70 focus-visible:border-[#081c16] focus-visible:ring-[#081c16]/10";
 
 const adminDialogLabelClass = "text-sm font-medium text-[#081c16]";
-const adminDialogSelectTriggerClass =
-  "h-10 w-full rounded-lg border-slate-200 bg-white px-4 text-sm text-[#081c16] shadow-none data-placeholder:text-[#616669]/70 focus-visible:border-[#081c16] focus-visible:ring-[#081c16]/10";
-const adminDialogSelectContentClass =
-  "rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm";
-const adminDialogSelectItemClass =
-  "cursor-pointer rounded-md px-3 py-2.5 text-sm text-[#081c16] focus:bg-slate-50 focus:text-[#081c16]";
 const searchableSelectTriggerClass =
   "flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 text-sm text-[#081c16] shadow-none outline-none transition-colors hover:bg-slate-50 focus-visible:border-[#081c16] focus-visible:ring-2 focus-visible:ring-[#081c16]/10 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-[#616669]/70";
 const searchableSelectContentClass =
@@ -72,71 +66,92 @@ const searchableSelectItemClass =
 
 const DELIVERY_OPTIONS = [
   {
-    value: "At Desk",
-    label: "At Desk",
+    value: "desk",
+    label: "Livraison au bureau",
     icon: Store,
   },
   {
-    value: "At Home",
-    label: "At Home",
+    value: "home",
+    label: "Livraison a domicile",
     icon: House,
   },
 ];
 
-const wilayaIndex = algeriaCities.reduce((accumulator, city) => {
-  const wilayaName = city.wilaya_name_ascii;
-  const communeName = city.commune_name_ascii;
+function normalizeLocationName(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
 
-  if (!accumulator[wilayaName]) {
-    accumulator[wilayaName] = {
-      code: city.wilaya_code,
-      name: wilayaName,
-      nameArabic: city.wilaya_name,
-      communes: {},
+function normalizePhone(value) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function buildVariantLabel(item) {
+  return [item.colorName, item.sizeName].filter(Boolean).join(" / ");
+}
+
+function formatPieceLabel(value) {
+  return `${value} piece${value > 1 ? "s" : ""}`;
+}
+
+function getOwnerStockState(ownerAvailability, quantity) {
+  if (ownerAvailability.availableQuantity >= quantity) {
+    return {
+      tone: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      text: `${ownerAvailability.availableQuantity} en stock`,
     };
   }
 
-  if (!accumulator[wilayaName].communes[communeName]) {
-    accumulator[wilayaName].communes[communeName] = {
-      value: communeName,
-      label: `${communeName} - ${city.commune_name}`,
-    };
+  return {
+    tone: "border-rose-200 bg-rose-50 text-rose-700",
+    text:
+      ownerAvailability.availableQuantity > 0
+        ? `${ownerAvailability.availableQuantity} dispo`
+        : "Out of stock",
+  };
+}
+
+function getAutoSelectedOwner(ownerAvailability, quantity) {
+  const eligibleOwners = ownerAvailability.filter(
+    (owner) => owner.availableQuantity >= quantity,
+  );
+
+  return eligibleOwners.length === 1 ? eligibleOwners[0].ownerName : "";
+}
+
+function getCustomerValidationErrors(customer) {
+  const errors = [];
+  const phone = normalizePhone(customer?.phone);
+
+  if (!customer?.name?.trim()) {
+    errors.push("Veuillez entrer le nom complet du client.");
   }
 
-  return accumulator;
-}, {});
+  if (!phone) {
+    errors.push("Veuillez entrer le numero de telephone du client.");
+  } else if (phone.length !== 10) {
+    errors.push("Le numero doit contenir exactement 10 chiffres.");
+  } else if (!/^(05|06|07)/.test(phone)) {
+    errors.push("Le numero doit commencer par 05, 06 ou 07.");
+  }
 
-const wilayaOptions = Object.values(wilayaIndex)
-  .sort(
-    (firstWilaya, secondWilaya) =>
-      Number(firstWilaya.code) - Number(secondWilaya.code),
-  )
-  .map((wilaya) => ({
-    value: wilaya.name,
-    label: `${wilaya.code} - ${wilaya.name} - ${wilaya.nameArabic}`,
-  }));
+  if (!customer?.wilaya) {
+    errors.push("Veuillez selectionner une wilaya.");
+  }
 
-const wilayaLabelByValue = Object.fromEntries(
-  wilayaOptions.map((wilaya) => [wilaya.value, wilaya.label]),
-);
+  if (!customer?.commune) {
+    errors.push("Veuillez selectionner une commune.");
+  }
 
-const communesByWilaya = Object.fromEntries(
-  Object.values(wilayaIndex).map((wilaya) => [
-    wilaya.name,
-    Object.values(wilaya.communes).sort((firstCommune, secondCommune) =>
-      firstCommune.value.localeCompare(secondCommune.value),
-    ),
-  ]),
-);
+  if (!customer?.address?.trim()) {
+    errors.push("Veuillez entrer une adresse.");
+  }
 
-const communeLabelByWilaya = Object.fromEntries(
-  Object.entries(communesByWilaya).map(([wilayaName, communes]) => [
-    wilayaName,
-    Object.fromEntries(
-      communes.map((commune) => [commune.value, commune.label]),
-    ),
-  ]),
-);
+  if (!customer?.delivery) {
+    errors.push("Veuillez choisir un mode de livraison.");
+  }
+
+  return errors;
+}
 
 function SearchableSelect({
   disabled = false,
@@ -154,7 +169,7 @@ function SearchableSelect({
   triggerId,
 }) {
   const contentId = `${triggerId}-content`;
-  const listRef = useRef(null);
+  const listRef = React.useRef(null);
 
   function handleListWheel(event) {
     if (!listRef.current) {
@@ -240,31 +255,245 @@ function SearchableSelect({
   );
 }
 
-export default function NewOrder() {
-  const [customer, setCustomer] = useState(null);
-  const [customerForm, setCustomerForm] = useState(EMPTY_CUSTOMER);
-  const [isCustomerDialogOpen, setIsCustomerDialogOpen] = useState(false);
-  const [selectedAssignee, setSelectedAssignee] = useState("");
-  const [isWilayaOpen, setIsWilayaOpen] = useState(false);
-  const [isCommuneOpen, setIsCommuneOpen] = useState(false);
-  const [wilayaSearchQuery, setWilayaSearchQuery] = useState("");
-  const [communeSearchQuery, setCommuneSearchQuery] = useState("");
+const wilayaNameCollator = new Intl.Collator("fr", {
+  sensitivity: "base",
+  numeric: true,
+});
+
+const wilayaOptions = Array.from(
+  algeriaCities
+    .reduce((wilayas, location) => {
+      const wilayaName = normalizeLocationName(location.wilaya_name_ascii);
+      const communeName = normalizeLocationName(location.commune_name_ascii);
+      const currentWilaya = wilayas.get(wilayaName) ?? {
+        code: location.wilaya_code,
+        name: wilayaName,
+        nameArabic: location.wilaya_name,
+        communes: new Set(),
+      };
+
+      currentWilaya.communes.add(
+        JSON.stringify({
+          nameAscii: communeName,
+          nameArabic: location.commune_name,
+        }),
+      );
+      wilayas.set(wilayaName, currentWilaya);
+
+      return wilayas;
+    }, new Map())
+    .values(),
+)
+  .sort((left, right) => Number(left.code) - Number(right.code))
+  .map((wilaya) => ({
+    code: wilaya.code,
+    value: wilaya.name,
+    label: `${wilaya.code} - ${wilaya.name} - ${wilaya.nameArabic}`,
+    communes: Array.from(wilaya.communes)
+      .map((commune) => JSON.parse(commune))
+      .sort((left, right) =>
+        wilayaNameCollator.compare(left.nameAscii, right.nameAscii),
+      )
+      .map((commune) => ({
+        value: commune.nameAscii,
+        label: `${commune.nameAscii} - ${commune.nameArabic}`,
+      })),
+  }));
+
+const wilayaLabelByValue = Object.fromEntries(
+  wilayaOptions.map((wilaya) => [wilaya.value, wilaya.label]),
+);
+
+const communesByWilaya = Object.fromEntries(
+  wilayaOptions.map((wilaya) => [wilaya.value, wilaya.communes]),
+);
+
+const communeLabelByWilaya = Object.fromEntries(
+  wilayaOptions.map((wilaya) => [
+    wilaya.value,
+    Object.fromEntries(
+      wilaya.communes.map((commune) => [commune.value, commune.label]),
+    ),
+  ]),
+);
+
+export default function NewOrderPage() {
+  const router = useRouter();
+  const [customer, setCustomer] = React.useState(null);
+  const [customerForm, setCustomerForm] = React.useState(EMPTY_CUSTOMER);
+  const [selectedItems, setSelectedItems] = React.useState([]);
+  const [isCustomerDialogOpen, setIsCustomerDialogOpen] = React.useState(false);
+  const [isProductDialogOpen, setIsProductDialogOpen] = React.useState(false);
+  const [customerDialogError, setCustomerDialogError] = React.useState("");
+  const [productsError, setProductsError] = React.useState("");
+  const [submissionError, setSubmissionError] = React.useState("");
+  const [validationMessages, setValidationMessages] = React.useState([]);
+  const [availableProducts, setAvailableProducts] = React.useState([]);
+  const [productsLoading, setProductsLoading] = React.useState(false);
+  const [productSearchQuery, setProductSearchQuery] = React.useState("");
+  const [selectedDialogProductId, setSelectedDialogProductId] = React.useState("");
+  const [selectedDialogColorName, setSelectedDialogColorName] = React.useState("");
+  const [selectedDialogSizeName, setSelectedDialogSizeName] = React.useState("");
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  const [isWilayaOpen, setIsWilayaOpen] = React.useState(false);
+  const [isCommuneOpen, setIsCommuneOpen] = React.useState(false);
+  const [wilayaSearchQuery, setWilayaSearchQuery] = React.useState("");
+  const [communeSearchQuery, setCommuneSearchQuery] = React.useState("");
+
+  const deferredProductSearchQuery = React.useDeferredValue(productSearchQuery);
+
+  const selectedCustomerWilaya = React.useMemo(
+    () => wilayaOptions.find((wilaya) => wilaya.value === customer?.wilaya),
+    [customer?.wilaya],
+  );
+  const previewCustomerWilaya = React.useMemo(
+    () => wilayaOptions.find((wilaya) => wilaya.value === customerForm.wilaya),
+    [customerForm.wilaya],
+  );
 
   const communeOptions = communesByWilaya[customerForm.wilaya] ?? [];
   const selectedWilayaLabel = wilayaLabelByValue[customerForm.wilaya] ?? "";
   const selectedCommuneLabel =
     communeLabelByWilaya[customerForm.wilaya]?.[customerForm.commune] ?? "";
   const filteredWilayaOptions = wilayaOptions.filter((wilaya) =>
-    wilaya.label.toLowerCase().includes(wilayaSearchQuery.trim().toLowerCase()),
+    wilaya.label
+      .toLowerCase()
+      .includes(wilayaSearchQuery.trim().toLowerCase()),
   );
   const filteredCommuneOptions = communeOptions.filter((commune) =>
     commune.label
       .toLowerCase()
       .includes(communeSearchQuery.trim().toLowerCase()),
   );
+
   const customerDeliveryOption = DELIVERY_OPTIONS.find(
     (option) => option.value === customer?.delivery,
   );
+
+  const filteredProducts = React.useMemo(() => {
+    const normalizedQuery = deferredProductSearchQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return availableProducts;
+    }
+
+    return availableProducts.filter((product) =>
+      product.name.toLowerCase().includes(normalizedQuery),
+    );
+  }, [availableProducts, deferredProductSearchQuery]);
+
+  const selectedDialogProduct = React.useMemo(
+    () =>
+      availableProducts.find((product) => product.id === selectedDialogProductId) ??
+      null,
+    [availableProducts, selectedDialogProductId],
+  );
+
+  const selectedDialogColorOptions = React.useMemo(() => {
+    if (!selectedDialogProduct) {
+      return [];
+    }
+
+    const colorsMap = new Map();
+
+    selectedDialogProduct.variants.forEach((variant) => {
+      const currentQuantity = colorsMap.get(variant.colorName) ?? 0;
+      colorsMap.set(
+        variant.colorName,
+        currentQuantity + Number(variant.availableQuantity || 0),
+      );
+    });
+
+    return Array.from(colorsMap.entries())
+      .map(([colorName, availableQuantity]) => ({
+        colorName,
+        availableQuantity,
+      }))
+      .sort((firstColor, secondColor) =>
+        firstColor.colorName.localeCompare(secondColor.colorName),
+      );
+  }, [selectedDialogProduct]);
+
+  const selectedDialogSizeOptions = React.useMemo(() => {
+    if (!selectedDialogProduct || !selectedDialogColorName) {
+      return [];
+    }
+
+    return selectedDialogProduct.variants
+      .filter((variant) => variant.colorName === selectedDialogColorName)
+      .map((variant) => ({
+        sizeName: variant.sizeName,
+        availableQuantity: variant.availableQuantity,
+      }))
+      .sort((firstSize, secondSize) =>
+        firstSize.sizeName.localeCompare(secondSize.sizeName),
+      );
+  }, [selectedDialogColorName, selectedDialogProduct]);
+
+  const selectedDialogVariant = React.useMemo(() => {
+    if (
+      !selectedDialogProduct ||
+      !selectedDialogColorName ||
+      !selectedDialogSizeName
+    ) {
+      return null;
+    }
+
+    return (
+      selectedDialogProduct.variants.find(
+        (variant) =>
+          variant.colorName === selectedDialogColorName &&
+          variant.sizeName === selectedDialogSizeName,
+      ) ?? null
+    );
+  }, [
+    selectedDialogColorName,
+    selectedDialogProduct,
+    selectedDialogSizeName,
+  ]);
+
+  const subtotal = React.useMemo(
+    () =>
+      selectedItems.reduce(
+        (sum, item) => sum + Number(item.unitPrice || 0) * Number(item.quantity || 0),
+        0,
+      ),
+    [selectedItems],
+  );
+
+  const {
+    shippingFee,
+    shippingLoading,
+    shippingError,
+  } = useShippingRates({
+    wilaya: customer?.wilaya,
+    wilayaCode: selectedCustomerWilaya?.code,
+    commune: customer?.commune,
+    shippingMethod: customer?.delivery,
+    enabled: Boolean(
+      customer?.wilaya && selectedCustomerWilaya?.code && customer?.delivery,
+    ),
+  });
+
+  const {
+    shippingFee: previewShippingFee,
+    shippingLoading: previewShippingLoading,
+    shippingError: previewShippingError,
+  } = useShippingRates({
+    wilaya: customerForm.wilaya,
+    wilayaCode: previewCustomerWilaya?.code,
+    commune: customerForm.commune,
+    shippingMethod: customerForm.delivery,
+    enabled: Boolean(
+      isCustomerDialogOpen &&
+        customerForm.wilaya &&
+        previewCustomerWilaya?.code &&
+        customerForm.delivery,
+    ),
+  });
+
+  const total = subtotal + (shippingFee ?? 0);
   const isCustomerFormValid =
     customerForm.name.trim() &&
     customerForm.phone.trim() &&
@@ -273,7 +502,61 @@ export default function NewOrder() {
     customerForm.address.trim() &&
     customerForm.delivery.trim();
 
+  React.useEffect(() => {
+    if (!isProductDialogOpen) {
+      setProductSearchQuery("");
+      setSelectedDialogProductId("");
+      setSelectedDialogColorName("");
+      setSelectedDialogSizeName("");
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadProducts() {
+      setProductsLoading(true);
+      setProductsError("");
+
+      try {
+        const response = await fetch("/api/admin/orders", {
+          cache: "no-store",
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result?.error || "Failed to load products.");
+        }
+
+        if (!isCancelled) {
+          setAvailableProducts(result.products || []);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setProductsError(
+            error instanceof Error ? error.message : "Failed to load products.",
+          );
+        }
+      } finally {
+        if (!isCancelled) {
+          setProductsLoading(false);
+        }
+      }
+    }
+
+    loadProducts();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isProductDialogOpen]);
+
+  React.useEffect(() => {
+    setSubmissionError("");
+    setValidationMessages([]);
+  }, [customer, selectedItems]);
+
   function openCustomerDialog() {
+    setCustomerDialogError("");
     setCustomerForm(customer ? { ...customer } : { ...EMPTY_CUSTOMER });
     setIsCustomerDialogOpen(true);
     setIsWilayaOpen(false);
@@ -289,6 +572,7 @@ export default function NewOrder() {
       ...currentCustomerForm,
       [name]: value,
     }));
+    setCustomerDialogError("");
   }
 
   function handleWilayaChange(value) {
@@ -297,6 +581,7 @@ export default function NewOrder() {
       wilaya: value,
       commune: "",
     }));
+    setCustomerDialogError("");
     setIsWilayaOpen(false);
     setIsCommuneOpen(false);
     setWilayaSearchQuery("");
@@ -308,6 +593,7 @@ export default function NewOrder() {
       ...currentCustomerForm,
       commune: value,
     }));
+    setCustomerDialogError("");
     setIsCommuneOpen(false);
     setCommuneSearchQuery("");
   }
@@ -317,23 +603,242 @@ export default function NewOrder() {
       ...currentCustomerForm,
       delivery: value,
     }));
+    setCustomerDialogError("");
   }
 
   function handleCustomerSubmit(event) {
     event.preventDefault();
-    if (!isCustomerFormValid) {
+
+    const errors = getCustomerValidationErrors(customerForm);
+
+    if (errors.length) {
+      setCustomerDialogError(errors[0]);
       return;
     }
 
     setCustomer({
       name: customerForm.name.trim(),
-      phone: customerForm.phone.trim(),
+      phone: normalizePhone(customerForm.phone),
       wilaya: customerForm.wilaya,
       commune: customerForm.commune,
       address: customerForm.address.trim(),
-      delivery: customerForm.delivery.trim(),
+      delivery: customerForm.delivery,
     });
+    setCustomerDialogError("");
     setIsCustomerDialogOpen(false);
+  }
+
+  function handleSelectDialogProduct(productId) {
+    setSelectedDialogProductId(productId);
+    setSelectedDialogColorName("");
+    setSelectedDialogSizeName("");
+  }
+
+  function handleSelectDialogColor(colorName) {
+    setSelectedDialogColorName(colorName);
+    setSelectedDialogSizeName("");
+  }
+
+  function handleSelectDialogSize(sizeName) {
+    setSelectedDialogSizeName(sizeName);
+  }
+
+  function handleSelectVariant(product, variant) {
+    setSelectedItems((currentItems) => {
+      const existingItem = currentItems.find(
+        (currentItem) => currentItem.variantId === variant.id,
+      );
+
+      if (existingItem) {
+        const nextQuantity = Math.min(
+          existingItem.quantity + 1,
+          existingItem.availableQuantity,
+        );
+
+        return currentItems.map((currentItem) =>
+          currentItem.variantId === variant.id
+            ? {
+                ...currentItem,
+                quantity: nextQuantity,
+              }
+            : currentItem,
+        );
+      }
+
+      return [
+        ...currentItems,
+        {
+          variantId: variant.id,
+          productId: product.id,
+          productName: product.name,
+          category: product.category,
+          image: product.image,
+          unitPrice: product.price,
+          colorName: variant.colorName,
+          sizeName: variant.sizeName,
+          quantity: 1,
+          availableQuantity: variant.availableQuantity,
+          ownerAvailability: variant.ownerAvailability,
+          selectedOwner: getAutoSelectedOwner(variant.ownerAvailability, 1),
+        },
+      ];
+    });
+
+    setIsProductDialogOpen(false);
+  }
+
+  function handleAddSelectedVariant() {
+    if (!selectedDialogProduct || !selectedDialogVariant) {
+      return;
+    }
+
+    handleSelectVariant(selectedDialogProduct, selectedDialogVariant);
+  }
+
+  function handleRemoveItem(variantId) {
+    setSelectedItems((currentItems) =>
+      currentItems.filter((item) => item.variantId !== variantId),
+    );
+  }
+
+  function handleQuantityChange(variantId, rawValue) {
+    const parsedValue = Number.parseInt(String(rawValue || ""), 10);
+
+    setSelectedItems((currentItems) =>
+      currentItems.map((item) => {
+        if (item.variantId !== variantId) {
+          return item;
+        }
+
+        const nextQuantity = Number.isInteger(parsedValue)
+          ? Math.min(Math.max(parsedValue, 1), item.availableQuantity)
+          : 1;
+
+        return {
+          ...item,
+          quantity: nextQuantity,
+        };
+      }),
+    );
+  }
+
+  function handleToggleOwner(variantId, ownerName) {
+    setSelectedItems((currentItems) =>
+      currentItems.map((item) =>
+        item.variantId === variantId
+          ? {
+              ...item,
+              selectedOwner: item.selectedOwner === ownerName ? "" : ownerName,
+            }
+          : item,
+      ),
+    );
+  }
+
+  function validateOrderDraft() {
+    const errors = [];
+
+    if (!customer) {
+      errors.push("Ajoutez d'abord les informations du client.");
+    } else {
+      errors.push(...getCustomerValidationErrors(customer));
+    }
+
+    if (!selectedItems.length) {
+      errors.push("Ajoutez au moins un produit a la commande.");
+    }
+
+    if (shippingLoading) {
+      errors.push(
+        "Le tarif de livraison est en cours de chargement. Veuillez patienter.",
+      );
+    } else if (customer && shippingFee === null) {
+      errors.push(
+        shippingError ||
+          "Aucun tarif ZR Express n'est disponible pour cette commande.",
+      );
+    }
+
+    selectedItems.forEach((item) => {
+      if (item.quantity > item.availableQuantity) {
+        errors.push(
+          `${item.productName} (${buildVariantLabel(item)}): la quantite depasse le stock disponible.`,
+        );
+      }
+
+      if (item.selectedOwner) {
+        const selectedOwnerAvailability =
+          item.ownerAvailability.find(
+            (owner) => owner.ownerName === item.selectedOwner,
+          )?.availableQuantity ?? 0;
+
+        if (selectedOwnerAvailability < item.quantity) {
+          errors.push(
+            `${item.selectedOwner} n'a pas assez de stock pour ${item.productName} (${buildVariantLabel(item)}).`,
+          );
+        }
+      }
+    });
+
+    return errors;
+  }
+
+  async function handleCreateOrder() {
+    setSubmissionError("");
+    const errors = validateOrderDraft();
+
+    if (errors.length) {
+      setValidationMessages(errors);
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/admin/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fullName: customer.name,
+          phone: customer.phone,
+          wilaya: customer.wilaya,
+          wilayaCode: selectedCustomerWilaya?.code ?? null,
+          commune: customer.commune,
+          address: customer.address,
+          shippingMethod: customer.delivery,
+          items: selectedItems.map((item) => ({
+            variantId: item.variantId,
+            quantity: item.quantity,
+            ownerName: item.selectedOwner,
+          })),
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result?.error || "Impossible d'enregistrer la commande.",
+        );
+      }
+
+      if (Array.isArray(result.assignmentWarnings) && result.assignmentWarnings.length) {
+        window.alert(
+          `Commande creee avec avertissement:\n${result.assignmentWarnings.join("\n")}`,
+        );
+      }
+
+      router.replace("/admin/orders");
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error
+          ? error.message
+          : "Impossible d'enregistrer la commande.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -357,58 +862,438 @@ export default function NewOrder() {
 
       <div className="flex flex-col gap-4 sm:gap-6 xl:flex-row xl:items-start">
         <div className="contents xl:flex xl:flex-1 xl:flex-col xl:gap-6">
-          <div className="order-1 flex min-h-40 flex-col items-stretch gap-4 rounded-2xl border border-slate-200 p-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:p-5 xl:order-none">
-            <div className="flex flex-row items-center gap-1 text-lg font-semibold text-[#081c16]">
-              <Package size={16} color="#081c16" strokeWidth={3} />
-              Produit
+          <div className="order-1 flex min-h-40 flex-col gap-5 rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_2px_10px_rgba(15,23,42,0.05)] sm:p-5 xl:order-none">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-lg font-semibold text-[#081c16]">
+                <Package size={18} color="#081c16" strokeWidth={2.4} />
+                Produit
+              </div>
+
+              <Dialog open={isProductDialogOpen} onOpenChange={setIsProductDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="rounded-full bg-[#08251f] px-4 text-sm font-semibold text-white hover:bg-[#0b3129]">
+                    Browse products
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[85vh] overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-sm sm:max-w-5xl">
+                  <DialogHeader className="gap-1 border-b border-slate-200 px-4 py-4 sm:px-6 sm:py-5">
+                    <DialogTitle className="text-lg font-semibold text-[#081c16]">
+                      Produits disponibles
+                    </DialogTitle>
+                    <DialogDescription className="text-sm text-[#616669]">
+                      Recherchez un produit puis choisissez la variante a ajouter
+                      a la commande.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        value={productSearchQuery}
+                        onChange={(event) =>
+                          setProductSearchQuery(event.target.value)
+                        }
+                        placeholder="Search by product name..."
+                        className="h-10 rounded-xl border-slate-200 bg-white pl-10 pr-4 text-sm text-[#081c16] shadow-none placeholder:text-[#616669]/70 focus-visible:border-[#081c16] focus-visible:ring-[#081c16]/10"
+                      />
+                    </div>
+
+                    {productsError ? (
+                      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        {productsError}
+                      </div>
+                    ) : null}
+
+                    <div className="max-h-[56vh] overflow-y-auto pr-1">
+                      {productsLoading ? (
+                        <div className="flex min-h-44 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500">
+                          <Spinner size="lg" className="text-[#081c16]" />
+                          <span>Chargement des produits disponibles...</span>
+                        </div>
+                      ) : filteredProducts.length ? (
+                        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                          <div className="grid gap-4">
+                            {filteredProducts.map((product) => {
+                              const isSelected =
+                                selectedDialogProductId === product.id;
+
+                              return (
+                                <button
+                                  key={product.id}
+                                  type="button"
+                                  onClick={() => handleSelectDialogProduct(product.id)}
+                                  className={cn(
+                                    "rounded-2xl border p-4 text-left transition-colors",
+                                    isSelected
+                                      ? "border-[#081c16] bg-slate-50"
+                                      : "border-slate-200 hover:border-[#081c16]/30 hover:bg-slate-50/70",
+                                  )}>
+                                  <div className="flex gap-4">
+                                    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-slate-100">
+                                      {product.image ? (
+                                        <Image
+                                          src={product.image}
+                                          alt={product.name}
+                                          fill
+                                          unoptimized
+                                          sizes="80px"
+                                          className="object-cover"
+                                        />
+                                      ) : null}
+                                    </div>
+
+                                    <div className="min-w-0 flex-1 space-y-1">
+                                      <div className="flex flex-wrap items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-base font-semibold text-[#081c16]">
+                                            {product.name}
+                                          </p>
+                                          <p className="text-sm text-slate-500">
+                                            {product.category}
+                                          </p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="text-sm font-semibold text-[#081c16]">
+                                            {formatPrice(product.price)}
+                                          </p>
+                                          <p className="text-xs text-slate-500">
+                                            {formatPieceLabel(product.availableQuantity)}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      <p className="pt-2 text-xs text-slate-500">
+                                        Choisissez d&apos;abord ce produit pour voir
+                                        ses couleurs puis ses tailles
+                                        disponibles.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 p-4">
+                            {selectedDialogProduct ? (
+                              <div className="flex h-full flex-col gap-5">
+                                <div className="space-y-1">
+                                  <p className="text-base font-semibold text-[#081c16]">
+                                    {selectedDialogProduct.name}
+                                  </p>
+                                  <p className="text-sm text-slate-500">
+                                    {selectedDialogProduct.category}
+                                  </p>
+                                  <p className="text-sm font-semibold text-[#081c16]">
+                                    {formatPrice(selectedDialogProduct.price)}
+                                  </p>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <div className="text-sm font-semibold text-[#081c16]">
+                                    1. Choisir une couleur
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {selectedDialogColorOptions.map((color) => (
+                                      <button
+                                        key={`${selectedDialogProduct.id}-${color.colorName}`}
+                                        type="button"
+                                        onClick={() =>
+                                          handleSelectDialogColor(color.colorName)
+                                        }
+                                        className={cn(
+                                          "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-colors",
+                                          selectedDialogColorName === color.colorName
+                                            ? "border-[#081c16] bg-[#081c16] text-white"
+                                            : "border-slate-200 bg-white text-[#081c16] hover:bg-slate-50",
+                                        )}>
+                                        <span>{color.colorName}</span>
+                                        <span
+                                          className={cn(
+                                            "rounded-full border px-2 py-0.5 text-xs font-semibold",
+                                            selectedDialogColorName === color.colorName
+                                              ? "border-white/20 bg-white/10 text-white"
+                                              : "border-slate-200 bg-slate-50 text-slate-500",
+                                          )}>
+                                          {color.availableQuantity}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <div className="text-sm font-semibold text-[#081c16]">
+                                    2. Choisir une taille
+                                  </div>
+                                  {selectedDialogColorName ? (
+                                    <div className="flex flex-wrap gap-2">
+                                      {selectedDialogSizeOptions.map((size) => (
+                                        <button
+                                          key={`${selectedDialogProduct.id}-${selectedDialogColorName}-${size.sizeName}`}
+                                          type="button"
+                                          onClick={() =>
+                                            handleSelectDialogSize(size.sizeName)
+                                          }
+                                          className={cn(
+                                            "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition-colors",
+                                            selectedDialogSizeName === size.sizeName
+                                              ? "border-[#081c16] bg-[#081c16] text-white"
+                                              : "border-slate-200 bg-white text-[#081c16] hover:bg-slate-50",
+                                          )}>
+                                          <span>{size.sizeName}</span>
+                                          <span
+                                            className={cn(
+                                              "rounded-full border px-2 py-0.5 text-xs font-semibold",
+                                              selectedDialogSizeName === size.sizeName
+                                                ? "border-white/20 bg-white/10 text-white"
+                                                : "border-slate-200 bg-slate-50 text-slate-500",
+                                            )}>
+                                            {size.availableQuantity}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-4 text-sm text-slate-500">
+                                      Choisissez d&apos;abord une couleur pour
+                                      afficher les tailles disponibles.
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="mt-auto rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4">
+                                  {selectedDialogVariant ? (
+                                    <div className="space-y-3">
+                                      <div className="text-sm text-slate-500">
+                                        Variante selectionnee
+                                      </div>
+                                      <div className="text-sm font-semibold text-[#081c16]">
+                                        {selectedDialogVariant.colorName} /{" "}
+                                        {selectedDialogVariant.sizeName}
+                                      </div>
+                                      <div className="text-sm text-slate-500">
+                                        {formatPieceLabel(
+                                          selectedDialogVariant.availableQuantity,
+                                        )}{" "}
+                                        disponibles
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        onClick={handleAddSelectedVariant}
+                                        className="w-full rounded-xl bg-[#081c16] px-4 text-sm font-semibold text-white hover:bg-[#081c16]/90">
+                                        Ajouter cette variante
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <div className="text-sm text-slate-500">
+                                      Selectionnez un produit, une couleur puis
+                                      une taille pour ajouter la variante a la
+                                      commande.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex min-h-56 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500">
+                                Choisissez un produit dans la liste pour
+                                afficher ses couleurs puis ses tailles
+                                disponibles.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex min-h-44 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500">
+                          Aucun produit disponible ne correspond a cette
+                          recherche.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
-            <Dialog>
-              <DialogTrigger asChild>
-                <button
-                  type="button"
-                  className="w-full rounded-sm bg-black px-2 py-2 text-sm font-medium text-white sm:w-auto sm:py-1">
-                  Browse products
-                </button>
-              </DialogTrigger>
-              <DialogContent className="min-h-72 rounded-2xl border border-slate-200 bg-white" />
-            </Dialog>
+
+            {selectedItems.length ? (
+              <div className="grid gap-4">
+                {selectedItems.map((item) => (
+                  <div
+                    key={item.variantId}
+                    className="rounded-2xl border border-slate-200 p-4">
+                    <div className="flex gap-4">
+                      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-slate-100">
+                        {item.image ? (
+                          <Image
+                            src={item.image}
+                            alt={item.productName}
+                            fill
+                            unoptimized
+                            sizes="80px"
+                            className="object-cover"
+                          />
+                        ) : null}
+                      </div>
+
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-base font-semibold text-[#081c16]">
+                              {item.productName}
+                            </p>
+                            <p className="text-sm text-slate-500">
+                              {buildVariantLabel(item)}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {formatPieceLabel(item.availableQuantity)} disponibles
+                            </p>
+                          </div>
+
+                          <div className="flex items-start gap-2">
+                            <div className="text-right">
+                              <p className="text-sm font-semibold text-[#081c16]">
+                                {formatPrice(item.unitPrice)}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {formatPrice(item.unitPrice * item.quantity)}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem(item.variantId)}
+                              className="inline-flex size-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-[#081c16]">
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="grid gap-2">
+                            <Label
+                              htmlFor={`quantity-${item.variantId}`}
+                              className="text-xs font-medium text-slate-500">
+                              Quantite
+                            </Label>
+                            <Input
+                              id={`quantity-${item.variantId}`}
+                              type="number"
+                              min="1"
+                              max={item.availableQuantity}
+                              value={item.quantity}
+                              onChange={(event) =>
+                                handleQuantityChange(
+                                  item.variantId,
+                                  event.target.value,
+                                )
+                              }
+                              className="h-10 w-28 rounded-xl border-slate-200 bg-white px-4 text-sm text-[#081c16] shadow-none focus-visible:border-[#081c16] focus-visible:ring-[#081c16]/10"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500">
+                Ouvrez le navigateur de produits et choisissez une variante
+                disponible pour commencer la commande.
+              </div>
+            )}
           </div>
 
-          <div className="order-4 flex min-h-32 flex-col gap-5 rounded-[22px] border border-slate-200 p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)] sm:p-5 xl:order-none">
+          <div className="order-4 flex min-h-32 flex-col gap-5 rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_2px_10px_rgba(15,23,42,0.05)] sm:p-5 xl:order-none">
             <div className="flex flex-row items-center justify-start gap-2 text-lg font-semibold text-[#081c16]">
               <CreditCard size={18} color="#081c16" strokeWidth={2.4} />
               Paiement
             </div>
-            <div className="flex flex-col gap-4 rounded-2xl border border-slate-200  p-4">
+
+            <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 p-4">
               <p className="flex items-center justify-between gap-3 text-sm text-[#616669]">
-                Produit :{" "}
+                Produit :
                 <span className="text-base font-semibold text-[#081c16]">
-                  DZD 10000da
+                  {formatPrice(subtotal)}
                 </span>
               </p>
+
               <p className="flex items-center justify-between gap-3 text-sm text-[#616669]">
-                Livraison :{" "}
-                <span className="text-base font-semibold text-[#081c16]">
-                  DZD 500da
+                Livraison :
+                <span className="flex items-center gap-2 text-base font-semibold text-[#081c16]">
+                  {customer ? (
+                    shippingLoading ? (
+                      <>
+                        <Spinner size="sm" className="text-[#081c16]" />
+                        <span>Calcul...</span>
+                      </>
+                    ) : shippingFee !== null ? (
+                      formatPrice(shippingFee)
+                    ) : (
+                      "--"
+                    )
+                  ) : (
+                    "--"
+                  )}
                 </span>
               </p>
+
               <Separator className="bg-slate-200" />
+
               <p className="flex items-center justify-between gap-3 text-sm font-semibold text-[#081c16]">
                 TOTAL :
                 <span className="text-lg font-bold sm:text-xl">
-                  DZD 10500da
+                  {formatPrice(total)}
                 </span>
               </p>
-              <div className="flex flex-col gap-3 pt-1 sm:flex-row ">
+
+              {submissionError ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {submissionError}
+                </div>
+              ) : null}
+
+              {validationMessages.length ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                  <div className="text-sm font-semibold text-rose-700">
+                    La commande ne peut pas etre creee.
+                  </div>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {validationMessages.map((message) => (
+                      <p key={message} className="text-sm leading-6 text-rose-700">
+                        {message}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {customer && shippingError && !shippingLoading && shippingFee === null ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  {shippingError}
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-3 pt-1 sm:flex-row">
                 <button
                   type="button"
+                  onClick={() => router.push("/admin/orders")}
                   className="min-h-14 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold leading-none text-[#081c16] transition-colors hover:bg-slate-50 sm:min-h-11 sm:py-2.5">
                   Annuler
                 </button>
                 <button
                   type="button"
-                  className="min-h-14 flex-1 rounded-2xl bg-[#081c16] px-4 py-3 text-sm font-semibold leading-none text-white transition-colors hover:bg-[#081c16]/90 sm:min-h-11 sm:py-2.5">
-                  Creer la commande
+                  onClick={handleCreateOrder}
+                  disabled={isSubmitting}
+                  className="min-h-14 flex-1 rounded-2xl bg-[#081c16] px-4 py-3 text-sm font-semibold leading-none text-white transition-colors hover:bg-[#081c16]/90 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-11 sm:py-2.5">
+                  {isSubmitting ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <Spinner size="sm" className="text-white" />
+                      <span>Creation...</span>
+                    </span>
+                  ) : (
+                    "Creer la commande"
+                  )}
                 </button>
               </div>
             </div>
@@ -427,7 +1312,7 @@ export default function NewOrder() {
                 type="button"
                 className="w-full rounded-full bg-[#08251f] px-4 text-sm font-semibold text-white hover:bg-[#0b3129] sm:w-auto"
                 onClick={openCustomerDialog}>
-                {customer ? "Modifier le client" : "Ajouter un Client"}
+                {customer ? "Modifier le client" : "Ajouter un client"}
               </Button>
             </div>
 
@@ -484,7 +1369,7 @@ export default function NewOrder() {
                     ) : (
                       <Building2 size={16} color="#081c16" strokeWidth={2.2} />
                     )}
-                    {customer.delivery}
+                    {customerDeliveryOption?.label ?? customer.delivery}
                   </span>
                 </div>
 
@@ -498,34 +1383,106 @@ export default function NewOrder() {
               </>
             ) : (
               <div className="flex min-h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500 sm:min-h-52 sm:px-6">
-                Add the customer from the dialog and their information will show
-                here automatically.
+                Ajoutez le client puis choisissez ses informations de livraison
+                pour calculer le tarif ZR Express reel.
               </div>
             )}
           </div>
 
           <div className="flex flex-col gap-4 rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_2px_10px_rgba(15,23,42,0.05)] sm:p-5">
-            <div className="text-lg font-semibold text-[#081c16]">Assignee</div>
-            <Select
-              value={selectedAssignee || undefined}
-              onValueChange={setSelectedAssignee}>
-              <SelectTrigger className={adminDialogSelectTriggerClass}>
-                <SelectValue placeholder="Select assigned" />
-              </SelectTrigger>
-              <SelectContent
-                position="popper"
-                sideOffset={6}
-                className={adminDialogSelectContentClass}>
-                {SHOP_OWNERS.map((assignee) => (
-                  <SelectItem
-                    key={assignee}
-                    value={assignee}
-                    className={adminDialogSelectItemClass}>
-                    {assignee}
-                  </SelectItem>
+            <div className="text-lg font-semibold text-[#081c16]">
+              Assignee
+            </div>
+
+            {selectedItems.length ? (
+              <div className="flex flex-col gap-4">
+                {selectedItems.map((item) => (
+                  <div
+                    key={`assignee-${item.variantId}`}
+                    className="rounded-2xl border border-slate-200 p-4">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-[#081c16]">
+                        {item.productName}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {buildVariantLabel(item)} - {item.quantity} selectionne
+                        {item.quantity > 1 ? "s" : ""}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {item.ownerAvailability.map((ownerAvailability) => {
+                        const ownerState = getOwnerStockState(
+                          ownerAvailability,
+                          item.quantity,
+                        );
+                        const isSelected =
+                          item.selectedOwner === ownerAvailability.ownerName;
+
+                        return (
+                          <button
+                            key={`${item.variantId}-${ownerAvailability.ownerName}`}
+                            type="button"
+                            onClick={() =>
+                              handleToggleOwner(
+                                item.variantId,
+                                ownerAvailability.ownerName,
+                              )
+                            }
+                            className={cn(
+                              "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm transition-colors",
+                              isSelected
+                                ? "border-[#081c16] bg-[#081c16] text-white"
+                                : "border-slate-200 bg-white text-[#081c16] hover:bg-slate-50",
+                            )}>
+                            <span className="font-semibold">
+                              {ownerAvailability.ownerName}
+                            </span>
+                            <span
+                              className={cn(
+                                "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                                isSelected
+                                  ? "border-white/25 bg-white/10 text-white"
+                                  : ownerState.tone,
+                              )}>
+                              {ownerState.text}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {item.selectedOwner ? (
+                      <p
+                        className={cn(
+                          "mt-3 text-xs font-medium",
+                          (item.ownerAvailability.find(
+                            (owner) => owner.ownerName === item.selectedOwner,
+                          )?.availableQuantity ?? 0) >= item.quantity
+                            ? "text-emerald-700"
+                            : "text-rose-700",
+                        )}>
+                        {(item.ownerAvailability.find(
+                          (owner) => owner.ownerName === item.selectedOwner,
+                        )?.availableQuantity ?? 0) >= item.quantity
+                          ? `${item.selectedOwner} peut couvrir cette ligne.`
+                          : `${item.selectedOwner} n\u2019a pas assez de stock pour cette ligne.`}
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-xs text-slate-500">
+                        Laissez vide si vous voulez creer la commande sans
+                        assignation immediate.
+                      </p>
+                    )}
+                  </div>
                 ))}
-              </SelectContent>
-            </Select>
+              </div>
+            ) : (
+              <div className="flex min-h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center text-sm leading-6 text-slate-500">
+                Selectionnez d&apos;abord une variante produit. Les proprietaires
+                disponibles apparaitront ici avec leur stock reel.
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -540,6 +1497,7 @@ export default function NewOrder() {
             setIsCommuneOpen(false);
             setWilayaSearchQuery("");
             setCommuneSearchQuery("");
+            setCustomerDialogError("");
           }
         }}>
         <DialogContent className="rounded-2xl border border-slate-200 bg-white p-0 shadow-sm sm:max-w-md">
@@ -548,8 +1506,8 @@ export default function NewOrder() {
               {customer ? "Modifier le client" : "Ajouter un client"}
             </DialogTitle>
             <DialogDescription className="text-sm text-[#616669]">
-              Enregistrez les informations du client, elles apparaitront dans sa
-              fiche.
+              Enregistrez les informations du client pour calculer la livraison
+              et creer la commande.
             </DialogDescription>
           </DialogHeader>
 
@@ -579,7 +1537,7 @@ export default function NewOrder() {
               <Input
                 id="customer-phone"
                 name="phone"
-                placeholder="+2135XXXXXXXX"
+                placeholder="05XXXXXXXX"
                 value={customerForm.phone}
                 onChange={handleCustomerChange}
                 autoComplete="tel"
@@ -646,7 +1604,7 @@ export default function NewOrder() {
               <Input
                 id="customer-address"
                 name="address"
-                placeholder="city aadl pepeniere"
+                placeholder="Cite, immeuble, repere..."
                 value={customerForm.address}
                 onChange={handleCustomerChange}
                 autoComplete="street-address"
@@ -661,36 +1619,53 @@ export default function NewOrder() {
                 className={adminDialogLabelClass}>
                 Livraison :
               </Label>
-              <Select
-                value={customerForm.delivery || undefined}
-                onValueChange={handleDeliveryChange}>
-                <SelectTrigger
-                  id="customer-delivery"
-                  className={adminDialogSelectTriggerClass}>
-                  <SelectValue placeholder="Select delivery type" />
-                </SelectTrigger>
-                <SelectContent
-                  position="popper"
-                  sideOffset={6}
-                  className={adminDialogSelectContentClass}>
-                  {DELIVERY_OPTIONS.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      className={adminDialogSelectItemClass}>
-                      <span className="flex items-center gap-2">
-                        <option.icon
-                          size={16}
-                          color="#616669"
-                          strokeWidth={2.2}
-                        />
-                        {option.label}
+              <div className="grid gap-2 sm:grid-cols-2">
+                {DELIVERY_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleDeliveryChange(option.value)}
+                    className={cn(
+                      "flex min-h-14 items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors",
+                      customerForm.delivery === option.value
+                        ? "border-[#081c16] bg-[#081c16] text-white"
+                        : "border-slate-200 bg-white text-[#081c16] hover:bg-slate-50",
+                    )}>
+                    <option.icon size={18} strokeWidth={2.2} />
+                    <span className="text-sm font-semibold">{option.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-600">
+                {customerForm.delivery && customerForm.wilaya ? (
+                  previewShippingLoading ? (
+                    <span className="flex items-center gap-2">
+                      <Spinner size="sm" className="text-[#081c16]" />
+                      <span>Calcul du tarif ZR Express...</span>
+                    </span>
+                  ) : previewShippingFee !== null ? (
+                    <>
+                      Tarif ZR Express :{" "}
+                      <span className="font-semibold text-[#081c16]">
+                        {formatPrice(previewShippingFee)}
                       </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    </>
+                  ) : (
+                    previewShippingError ||
+                    "Aucun tarif ZR Express n'est disponible pour cette combinaison."
+                  )
+                ) : (
+                  "Choisissez la wilaya, la commune et le mode de livraison pour charger le vrai tarif."
+                )}
+              </div>
             </div>
+
+            {customerDialogError ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {customerDialogError}
+              </div>
+            ) : null}
 
             <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row">
               <Button
@@ -703,7 +1678,7 @@ export default function NewOrder() {
               <Button
                 type="submit"
                 disabled={!isCustomerFormValid}
-                className="min-h-14 flex-1 rounded-2xl bg-[#08251f] px-4 py-3 text-sm font-semibold leading-none text-white hover:bg-[#0b3129] sm:min-h-11 sm:py-2.5">
+                className="min-h-14 flex-1 rounded-2xl bg-[#08251f] px-4 py-3 text-sm font-semibold leading-none text-white hover:bg-[#0b3129] disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-11 sm:py-2.5">
                 Save Customer
               </Button>
             </div>

@@ -24,6 +24,7 @@ export function CompactStockColorCard({
   onSizeRowOwnerChange,
   ownerBadgeClassByName,
   sizeRows,
+  validationHintText = "Le controle du stock se fera quand vous validerez le produit.",
 }) {
   const activeSizeRows = sizeRows.filter(
     (sizeRow) =>
@@ -103,7 +104,7 @@ export function CompactStockColorCard({
             fois dans cette couleur.
           </p>
           <p className="mt-2 text-xs leading-5 text-slate-500">
-            Le controle du stock se fera quand vous validerez le produit.
+            {validationHintText}
           </p>
         </div>
 

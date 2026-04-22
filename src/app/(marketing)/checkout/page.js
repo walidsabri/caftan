@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import algeriaCities from "@/lib/algeria_cities.json";
 import { formatPrice } from "@/lib/format-price";
 import { useShippingRates } from "@/hooks/use-shipping-rates";
@@ -231,9 +232,10 @@ export default function CheckoutPage() {
     return (
       <section className="px-4 py-8 md:px-6 md:py-10">
         <div className="mx-auto max-w-6xl rounded-sm border border-caftan-border bg-caftan-cream px-6 py-14 text-center shadow-sm shadow-caftan-brand/10">
-          <p className="text-sm uppercase tracking-[0.2em] text-caftan-brand">
-            Chargement...
-          </p>
+          <div className="flex items-center justify-center gap-3 text-sm uppercase tracking-[0.2em] text-caftan-brand">
+            <Spinner size="md" className="text-caftan-brand" />
+            <p>Chargement...</p>
+          </div>
         </div>
       </section>
     );
@@ -509,7 +511,12 @@ export default function CheckoutPage() {
                     : !selectedShippingMethod
                       ? "Choisissez un mode de livraison pour calculer le tarif."
                       : shippingLoading
-                        ? "Chargement du tarif ZR Express..."
+                        ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Spinner size="sm" className="text-caftan-brand" />
+                              <span>Chargement du tarif ZR Express...</span>
+                            </span>
+                          )
                         : shippingPrice !== null
                           ? `Tarif ZR Express: ${formatPrice(shippingPrice)}`
                           : "Aucun tarif disponible pour cette zone pour le moment."}
@@ -600,7 +607,12 @@ export default function CheckoutPage() {
                 disabled={isSubmitting}
                 className="rounded-sm bg-caftan-brand px-6 py-3 text-sm font-medium uppercase tracking-[0.16em] text-caftan-cream transition-colors hover:bg-caftan-brand-dark disabled:cursor-not-allowed disabled:opacity-50">
                 {isSubmitting
-                  ? "Enregistrement..."
+                  ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Spinner size="sm" className="text-caftan-cream" />
+                        <span>Enregistrement...</span>
+                      </span>
+                    )
                   : "Passer la commande"}
               </button>
             </div>
@@ -655,7 +667,12 @@ export default function CheckoutPage() {
                 <span>Tarif ZR Express</span>
                 <span>
                   {shippingLoading
-                    ? "Chargement..."
+                    ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Spinner size="sm" className="text-caftan-brand" />
+                          <span>Chargement...</span>
+                        </span>
+                      )
                     : shippingPrice !== null
                       ? formatPrice(shippingPrice)
                       : selectedWilayaName &&

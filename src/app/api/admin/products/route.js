@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { SHOP_OWNERS } from "@/app/(admin)/admin/shared/shop-owners";
 import { ensureAdminRouteAccess } from "@/lib/admin-auth";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -10,6 +11,263 @@ import {
   sanitizeCount,
   validateProductPayload,
 } from "./product-payload";
+
+function compareLabels(firstLabel = "", secondLabel = "") {
+  return firstLabel.localeCompare(secondLabel);
+}
+
+function getAvailableInventoryQuantity(inventoryRow) {
+  return Math.max(
+    0,
+    Number(inventoryRow?.quantity || 0) -
+      Number(inventoryRow?.reserved_quantity || 0),
+  );
+}
+
+function getProductColorNames(productVariants) {
+  return Array.from(
+    new Set(
+      (productVariants ?? [])
+        .map((variant) => variant.colors?.name?.trim())
+        .filter(Boolean),
+    ),
+  ).sort(compareLabels);
+}
+
+function getProductSizeEntries(productVariants) {
+  const sizeEntriesByName = new Map();
+
+  for (const variant of productVariants ?? []) {
+    const sizeName = variant.sizes?.name?.trim();
+
+    if (!sizeName) {
+      continue;
+    }
+
+    sizeEntriesByName.set(sizeName, {
+      name: sizeName,
+      sortOrder: Number(variant.sizes?.sort_order) || 0,
+    });
+  }
+
+  return Array.from(sizeEntriesByName.values()).sort(
+    (firstSize, secondSize) =>
+      firstSize.sortOrder - secondSize.sortOrder ||
+      compareLabels(firstSize.name, secondSize.name),
+  );
+}
+
+export async function GET() {
+  try {
+    const supabase = await createClient();
+    const { unauthorizedResponse } = await ensureAdminRouteAccess(supabase);
+
+    if (unauthorizedResponse) {
+      return unauthorizedResponse;
+    }
+
+    const [
+      productsResponse,
+      stockOwnersResponse,
+      sizesResponse,
+      categoriesResponse,
+    ] = await Promise.all([
+      supabase
+        .from("products")
+        .select(
+          `
+          id,
+          name,
+          slug,
+          price,
+          old_price,
+          cover_image_url,
+          is_active,
+          created_at,
+          categories (
+            name
+          ),
+          product_variants (
+            id,
+            colors (
+              name
+            ),
+            sizes (
+              name,
+              sort_order
+            ),
+            variant_inventory (
+              quantity,
+              reserved_quantity,
+              stock_owners (
+                name
+              )
+            )
+          )
+        `,
+        )
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("stock_owners")
+        .select("name")
+        .eq("is_active", true)
+        .order("name", { ascending: true }),
+      supabase.from("sizes").select("name, sort_order"),
+      supabase.from("categories").select("name").order("name", { ascending: true }),
+    ]);
+
+    if (
+      productsResponse.error ||
+      stockOwnersResponse.error ||
+      sizesResponse.error ||
+      categoriesResponse.error
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            productsResponse.error?.message ||
+            stockOwnersResponse.error?.message ||
+            sizesResponse.error?.message ||
+            categoriesResponse.error?.message ||
+            "Failed to load products.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const rawProducts = productsResponse.data || [];
+    const variantIds = [];
+    const productIdByVariantId = new Map();
+
+    rawProducts.forEach((product) => {
+      (product.product_variants ?? []).forEach((variant) => {
+        if (!variant?.id) {
+          return;
+        }
+
+        variantIds.push(variant.id);
+        productIdByVariantId.set(variant.id, product.id);
+      });
+    });
+
+    const lastRestockByProductId = new Map();
+
+    if (variantIds.length) {
+      const restockResponse = await supabase
+        .from("stock_movements")
+        .select("variant_id, created_at")
+        .in("variant_id", variantIds)
+        .eq("movement_type", "restock")
+        .order("created_at", { ascending: false });
+
+      if (restockResponse.error) {
+        return NextResponse.json(
+          {
+            error: restockResponse.error.message || "Failed to load products.",
+          },
+          { status: 400 },
+        );
+      }
+
+      (restockResponse.data || []).forEach((movement) => {
+        const productId = productIdByVariantId.get(movement.variant_id);
+
+        if (!productId || lastRestockByProductId.has(productId)) {
+          return;
+        }
+
+        lastRestockByProductId.set(productId, movement.created_at);
+      });
+    }
+
+    const mappedProducts = rawProducts.map((product) => {
+      const colorNames = getProductColorNames(product.product_variants);
+      const sizeEntries = getProductSizeEntries(product.product_variants);
+      const availableQuantity = (product.product_variants ?? []).reduce(
+        (productSum, variant) =>
+          productSum +
+          (variant.variant_inventory ?? []).reduce(
+            (variantSum, inventoryRow) =>
+              variantSum + getAvailableInventoryQuantity(inventoryRow),
+            0,
+          ),
+        0,
+      );
+      const assignedOwners = Array.from(
+        new Set(
+          (product.product_variants ?? []).flatMap((variant) =>
+            (variant.variant_inventory ?? [])
+              .filter((inventoryRow) => Number(inventoryRow.quantity) > 0)
+              .map((inventoryRow) => inventoryRow.stock_owners?.name)
+              .filter(Boolean),
+          ),
+        ),
+      ).sort(compareLabels);
+
+      return {
+        id: product.id,
+        name: product.name,
+        slug: product.slug,
+        price: product.price,
+        oldPrice: product.old_price,
+        image: product.cover_image_url,
+        category: product.categories?.name ?? "Sans categorie",
+        status: product.is_active ? "Active" : "Inactive",
+        createdAt: product.created_at,
+        lastRestockAt: lastRestockByProductId.get(product.id) ?? null,
+        availableQuantity,
+        stockState: availableQuantity > 0 ? "In stock" : "Out of stock",
+        assignedOwners,
+        colorNames,
+        sizeNames: sizeEntries.map((sizeEntry) => sizeEntry.name),
+      };
+    });
+
+    const assigneeOptions = Array.from(
+      new Set([
+        ...SHOP_OWNERS,
+        ...(stockOwnersResponse.data || [])
+          .map((owner) => owner.name?.trim())
+          .filter(Boolean),
+        ...mappedProducts.flatMap((product) => product.assignedOwners),
+      ]),
+    ).sort(compareLabels);
+    const sizeOptions = (sizesResponse.data || [])
+      .map((size) => ({
+        name: size.name?.trim(),
+        sortOrder: Number(size.sort_order) || 0,
+      }))
+      .filter((size) => Boolean(size.name))
+      .sort(
+        (firstSize, secondSize) =>
+          firstSize.sortOrder - secondSize.sortOrder ||
+          compareLabels(firstSize.name, secondSize.name),
+      )
+      .map((size) => size.name);
+    const categoryOptions = Array.from(
+      new Set(
+        (categoriesResponse.data || [])
+          .map((category) => category.name?.trim())
+          .filter(Boolean),
+      ),
+    ).sort(compareLabels);
+
+    return NextResponse.json({
+      products: mappedProducts,
+      assigneeOptions,
+      sizeOptions,
+      categoryOptions,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Unexpected server error.",
+      },
+      { status: 500 },
+    );
+  }
+}
 
 export async function POST(request) {
   try {

@@ -1,18 +1,16 @@
 "use client";
 
-import { ArrowUpDown, ChevronDown, MapPin, Plus } from "lucide-react";
+import { ArrowUpDown, ChevronDown, MapPin } from "lucide-react";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -29,20 +27,18 @@ const priceFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
-const STATUS_OPTIONS = [
-  { value: "En attente", label: "En attente" },
-  { value: "Confirme", label: "Confirme" },
-  { value: "Programme", label: "Programme" },
-  { value: "Annuler", label: "Annuler" },
+export const ORDER_STATUS_OPTIONS = [
+  { value: "pending", label: "En attente" },
+  { value: "confirmed", label: "Confirmee" },
+  { value: "assigned", label: "Assignee" },
+  { value: "preparing", label: "Preparation" },
+  { value: "shipped", label: "Expediee" },
+  { value: "delivered", label: "Livree" },
+  { value: "cancelled", label: "Annulee" },
+  { value: "returned", label: "Retournee" },
 ];
 
 const UNASSIGNED_OWNER_VALUE = "__unassigned__";
-const ASSIGNEE_OPTIONS = [
-  { value: UNASSIGNED_OWNER_VALUE, label: "Non assigne" },
-  { value: "Warda", label: "Warda" },
-  { value: "Hanane", label: "Hanane" },
-  { value: "Amina", label: "Amina" },
-];
 
 function formatOrderDate(value) {
   return dateFormatter.format(new Date(value)).replace(",", "");
@@ -50,15 +46,6 @@ function formatOrderDate(value) {
 
 function formatPrice(value) {
   return `DZD ${priceFormatter.format(value)}`;
-}
-
-function getInitials(value) {
-  return value
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 }
 
 function SortableHeader({ column, title, className = "" }) {
@@ -75,39 +62,52 @@ function SortableHeader({ column, title, className = "" }) {
 
 function getStatusClasses(status) {
   switch (status) {
-    case "Confirme":
+    case "confirmed":
       return "border-emerald-500 bg-emerald-50 text-emerald-700";
-    case "Annuler":
-      return "border-rose-500 bg-rose-50 text-red-600";
-    case "Programme":
+    case "assigned":
       return "border-sky-300 bg-sky-50 text-sky-700";
+    case "preparing":
+      return "border-indigo-300 bg-indigo-50 text-indigo-700";
+    case "shipped":
+      return "border-blue-300 bg-blue-50 text-blue-700";
+    case "delivered":
+      return "border-teal-300 bg-teal-50 text-teal-700";
+    case "cancelled":
+      return "border-rose-500 bg-rose-50 text-red-600";
+    case "returned":
+      return "border-slate-300 bg-slate-100 text-slate-700";
     default:
       return "border-amber-400 bg-amber-50 text-amber-500";
   }
 }
 
-function getStatusLabel(status) {
+export function getOrderStatusLabel(status) {
   return (
-    STATUS_OPTIONS.find((option) => option.value === status)?.label ??
-    STATUS_OPTIONS[0].label
+    ORDER_STATUS_OPTIONS.find((option) => option.value === status)?.label ??
+    ORDER_STATUS_OPTIONS[0].label
   );
 }
 
-function StatusSelect({ value, onValueChange }) {
+function StatusSelect({ value, onValueChange, disabled = false, isPending = false }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          disabled={disabled || isPending}
           className="inline-flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-slate-300">
           <span
             className={cn(
               "inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold",
               getStatusClasses(value)
             )}>
-            {getStatusLabel(value)}
+            {getOrderStatusLabel(value)}
           </span>
-          <ChevronDown className="size-4 text-slate-400" />
+          {isPending ? (
+            <Spinner size="sm" className="text-[#616669]" />
+          ) : (
+            <ChevronDown className="size-4 text-slate-400" />
+          )}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -116,7 +116,7 @@ function StatusSelect({ value, onValueChange }) {
         sideOffset={10}
         className="w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
         <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
-          {STATUS_OPTIONS.map((status) => {
+          {ORDER_STATUS_OPTIONS.map((status) => {
             const isCurrent = status.value === value;
 
             return (
@@ -139,39 +139,65 @@ function StatusSelect({ value, onValueChange }) {
             );
           })}
         </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator className="mx-0 my-1 bg-slate-200" />
-        <DropdownMenuItem className="rounded-lg px-3 py-2 text-sm font-medium text-blue-600 focus:bg-blue-50 focus:text-blue-600">
-          <Plus className="size-4" />
-          Add Status
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function getDeliveryMethodLabel(value) {
+  return value === "desk" ? "Store Pickup" : "Home Delivery";
 }
 
 function getAssigneeLabel(value) {
   return value || "Non assigne";
 }
 
-function AssigneeSelect({ value, onValueChange, disabled = false }) {
+function AssigneeSelect({
+  value,
+  displayValue,
+  onValueChange,
+  assigneeOptions = [],
+  disabled = false,
+  isPending = false,
+}) {
   const dropdownValue = value || UNASSIGNED_OWNER_VALUE;
-  const isUnassigned = dropdownValue === UNASSIGNED_OWNER_VALUE;
+  const triggerValue = displayValue || value || "";
+  const isUnassigned = !triggerValue;
+  const resolvedAssigneeOptions = [
+    { value: UNASSIGNED_OWNER_VALUE, label: "Non assigne" },
+    ...assigneeOptions.map((assignee) =>
+      typeof assignee === "string"
+        ? {
+            value: assignee,
+            label: assignee,
+            statusLabel: "",
+          }
+        : {
+            value: assignee.value,
+            label: assignee.label,
+            statusLabel: assignee.statusLabel || "",
+          },
+    ),
+  ];
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          disabled={disabled}
+          disabled={disabled || isPending}
           className="inline-flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-default disabled:pointer-events-none">
           <span
             className={cn(
               "text-sm font-normal",
               isUnassigned ? "text-[#616669]" : "text-[#081c16]"
             )}>
-            {getAssigneeLabel(value)}
+            {getAssigneeLabel(triggerValue)}
           </span>
-          {!disabled ? <ChevronDown className="size-4 text-slate-400" /> : null}
+          {!disabled && !isPending ? (
+            <ChevronDown className="size-4 text-slate-400" />
+          ) : null}
+          {isPending ? <Spinner size="sm" className="text-[#616669]" /> : null}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -186,7 +212,7 @@ function AssigneeSelect({ value, onValueChange, disabled = false }) {
               nextValue === UNASSIGNED_OWNER_VALUE ? "" : nextValue
             )
           }>
-          {ASSIGNEE_OPTIONS.map((assignee) => (
+          {resolvedAssigneeOptions.map((assignee) => (
             <DropdownMenuRadioItem
               key={assignee.value}
               value={assignee.value}
@@ -194,7 +220,14 @@ function AssigneeSelect({ value, onValueChange, disabled = false }) {
                 "min-h-10 rounded-lg px-3 py-2 text-sm text-slate-800 focus:bg-slate-50",
                 assignee.value === dropdownValue && "bg-slate-50"
               )}>
-              {assignee.label}
+              <div className="flex w-full items-center justify-between gap-3 pr-4">
+                <span>{assignee.label}</span>
+                {assignee.statusLabel ? (
+                  <span className="text-xs font-medium text-slate-400">
+                    {assignee.statusLabel}
+                  </span>
+                ) : null}
+              </div>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -207,6 +240,8 @@ export function getOrderColumns({
   onStatusChange,
   onOwnerChange,
   isDispatchMode = false,
+  getIsStatusPending = () => false,
+  getIsOwnerPending = () => false,
 }) {
   return [
     {
@@ -254,29 +289,47 @@ export function getOrderColumns({
     {
       accessorKey: "products",
       header: "Produits",
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2">
-          <Avatar className="size-8">
-            <AvatarFallback className="bg-stone-200 text-[11px] font-semibold text-slate-700">
-              {getInitials(row.original.products[0])}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <p className="max-w-[128px] truncate text-sm font-semibold text-[#081c16]">
-              {row.original.products[0]}
-              {row.original.products.length > 1
-                ? ` +${row.original.products.length - 1}`
-                : ""}
-            </p>
+      cell: ({ row }) => {
+        const orderItems = row.original.orderItems?.length
+          ? row.original.orderItems
+          : [{ id: "unknown", label: "Produit inconnu" }];
+
+        return (
+          <div className="flex min-w-[220px] flex-col gap-1.5">
+            <div className="space-y-2">
+              {orderItems.map((orderItem) => (
+                <div key={orderItem.id} className="min-h-10">
+                  <p className="max-w-[240px] text-sm font-medium leading-5 text-[#081c16]">
+                    {orderItem.label}
+                  </p>
+                </div>
+              ))}
+
+              {row.original.products.length > orderItems.length ? (
+                <p className="text-xs font-medium text-[#616669]">
+                  +{row.original.products.length - orderItems.length} autre
+                  {row.original.products.length - orderItems.length > 1
+                    ? "s"
+                    : ""}
+                </p>
+              ) : null}
+            </div>
+
+            {row.original.products.length > 3 ? (
+              <div className="text-xs text-[#616669]">
+                {row.original.products.length} lignes produit
+              </div>
+            ) : null}
+
             <p className="text-xs text-[#616669]">
               {formatPrice(row.original.totalPrice)}
             </p>
           </div>
-        </div>
-      ),
+        );
+      },
       enableSorting: false,
       meta: {
-        headerClassName: "min-w-[150px]",
+        headerClassName: "min-w-[220px]",
         cellClassName: "align-middle",
       },
     },
@@ -291,7 +344,7 @@ export function getOrderColumns({
               {row.original.deliveryAddress}
             </p>
             <p className="truncate text-xs text-[#616669]">
-              {row.original.deliveryMethod}
+              {getDeliveryMethodLabel(row.original.deliveryMethod)}
             </p>
           </div>
         </div>
@@ -308,6 +361,7 @@ export function getOrderColumns({
       cell: ({ row }) => (
         <StatusSelect
           value={row.original.status}
+          isPending={getIsStatusPending(row.original.id)}
           onValueChange={(value) => onStatusChange(row.original.id, value)}
         />
       ),
@@ -338,16 +392,40 @@ export function getOrderColumns({
     {
       accessorKey: "owner",
       header: "Assignee",
-      cell: ({ row }) => (
-        <AssigneeSelect
-          value={row.original.owner}
-          disabled={isDispatchMode}
-          onValueChange={(value) => onOwnerChange(row.original.id, value)}
-        />
-      ),
+      cell: ({ row }) => {
+        const orderItems = row.original.orderItems?.length
+          ? row.original.orderItems
+          : [
+              {
+                id: row.original.id,
+                owner: row.original.owner,
+                suggestedOwner: "",
+                ownerOptions: [],
+              },
+            ];
+
+        return (
+          <div className="flex min-w-[180px] flex-col gap-2">
+            {orderItems.map((orderItem) => (
+              <div key={orderItem.id} className="min-h-10">
+                <AssigneeSelect
+                  value={orderItem.owner}
+                  displayValue={orderItem.owner || orderItem.suggestedOwner}
+                  assigneeOptions={orderItem.ownerOptions}
+                  disabled={isDispatchMode}
+                  isPending={getIsOwnerPending(orderItem.id)}
+                  onValueChange={(value) =>
+                    onOwnerChange(row.original.id, orderItem.id, value)
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        );
+      },
       enableSorting: false,
       meta: {
-        headerClassName: "min-w-[118px]",
+        headerClassName: "min-w-[180px]",
       },
     },
   ];

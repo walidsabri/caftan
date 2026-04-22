@@ -35,6 +35,14 @@ function createOwnerSplit() {
   return Object.fromEntries(SHOP_OWNERS.map((owner) => [owner, ""]));
 }
 
+function getAvailableInventoryQuantity(inventoryRow) {
+  return Math.max(
+    0,
+    sanitizeCount(inventoryRow?.quantity) -
+      sanitizeCount(inventoryRow?.reserved_quantity),
+  );
+}
+
 function serializeProductForEditor(product) {
   const images = [...(product.product_images ?? [])].sort(
     (firstImage, secondImage) =>
@@ -111,19 +119,20 @@ function serializeProductForEditor(product) {
 
     for (const inventoryRow of variant.variant_inventory ?? []) {
       const ownerName = inventoryRow.stock_owners?.name;
-      const quantity = sanitizeCount(inventoryRow.quantity);
+      const availableQuantity = getAvailableInventoryQuantity(inventoryRow);
 
-      rowQuantity += quantity;
+      rowQuantity += availableQuantity;
 
       if (ownerName && ownerName in owners) {
-        owners[ownerName] = quantity > 0 ? `${quantity}` : "";
+        owners[ownerName] =
+          availableQuantity > 0 ? `${availableQuantity}` : "";
       }
     }
 
     stockByColor[colorName].push({
       id: `variant-${variant.id}`,
       size: variant.sizes?.name ?? "",
-      quantity: rowQuantity > 0 ? `${rowQuantity}` : "",
+      quantity: `${rowQuantity}`,
       owners,
     });
   });
@@ -224,7 +233,9 @@ async function handleStatusPatch(supabase, productId, isActive) {
 }
 
 async function handleFullPatch(supabase, productId, body) {
-  const validation = validateProductPayload(body);
+  const validation = validateProductPayload(body, {
+    allowZeroQuantity: true,
+  });
 
   if (!validation.isValid) {
     return NextResponse.json(
@@ -332,20 +343,12 @@ async function handleFullPatch(supabase, productId, body) {
           );
         }
 
-        const quantity = sanitizeCount(row.owners?.[ownerName]);
+        const availableQuantity = sanitizeCount(row.owners?.[ownerName]);
         const existingInventory = existingInventoryByOwner.get(ownerName);
         const reservedQuantity = sanitizeCount(
           existingInventory?.reserved_quantity,
         );
-
-        if (quantity < reservedQuantity) {
-          return NextResponse.json(
-            {
-              error: `${colorName} / ${String(row.size || "").trim()}: ${ownerName} cannot be reduced below reserved quantity (${reservedQuantity}).`,
-            },
-            { status: 400 },
-          );
-        }
+        const quantity = availableQuantity + reservedQuantity;
 
         if (existingInventory) {
           const { error: updateInventoryError } = await supabase

@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -370,7 +371,10 @@ export default function CategoriesPage() {
               {isLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="h-28 text-center">
-                    Loading categories...
+                    <div className="flex items-center justify-center gap-3 text-sm text-slate-500">
+                      <Spinner size="md" className="text-[#081c16]" />
+                      <span>Loading categories...</span>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : categories.length ? (

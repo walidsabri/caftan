@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { useCart } from "@/components/cart-provider";
+import { Spinner } from "@/components/ui/spinner";
 import { formatPrice } from "@/lib/format-price";
 
 export default function CartPage() {
@@ -33,9 +34,10 @@ export default function CartPage() {
 
         {!hasHydrated ? (
           <div className="rounded-sm border border-caftan-border bg-caftan-cream px-6 py-14 text-center shadow-sm shadow-caftan-brand/10">
-            <p className="text-sm uppercase tracking-[0.2em] text-caftan-brand">
-              Chargement du panier...
-            </p>
+            <div className="flex items-center justify-center gap-3 text-sm uppercase tracking-[0.2em] text-caftan-brand">
+              <Spinner size="md" className="text-caftan-brand" />
+              <p>Chargement du panier...</p>
+            </div>
           </div>
         ) : items.length ? (
           <>

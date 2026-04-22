@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 
 const adminInputClass =
   "h-10 rounded-xl border-slate-200 bg-white px-4 text-sm text-[#081c16] shadow-none placeholder:text-[#616669]/70 focus-visible:border-[#081c16] focus-visible:ring-[#081c16]/10";
@@ -175,6 +176,14 @@ export function ProductForm({ mode = "create", productId = null }) {
   const priceValue = parseCount(price);
   const oldPriceValue = parseCount(oldPrice);
   const totalQuantityValue = parseCount(quantity);
+  const quantityLabel = isEditMode ? "Stock disponible" : "Quantite totale";
+  const quantityHelpText = isEditMode
+    ? "Les quantites affichees ici correspondent au stock disponible actuel. Le stock deja reserve dans les commandes reste conserve quand vous enregistrez."
+    : "Commencez par le total, puis detaillez les couleurs et les tailles juste en dessous.";
+  const detailQuantityLabel = isEditMode ? "Detail disponible" : "Detail stock";
+  const allocatedQuantityLabel = isEditMode
+    ? "Disponible attribue"
+    : "Stock attribue";
 
   const stockEntries = colors.flatMap((color) =>
     (stockByColor[color] ?? []).map((sizeRow) => ({
@@ -534,7 +543,9 @@ export function ProductForm({ mode = "create", productId = null }) {
       );
     }
 
-    if (!hasDefinedTotalQuantity || totalQuantityValue <= 0) {
+    if (!hasDefinedTotalQuantity) {
+      errors.push("Entrez une quantite totale.");
+    } else if (!isEditMode && totalQuantityValue <= 0) {
       errors.push("Entrez une quantite totale superieure a 0.");
     }
 
@@ -567,7 +578,12 @@ export function ProductForm({ mode = "create", productId = null }) {
           errors.push(`${color}: une ligne de stock n'a pas de taille.`);
         }
 
-        if (rowQuantity <= 0) {
+        if (sizeRow.quantity === "") {
+          errors.push(`${rowLabel}: entrez une quantite.`);
+          return;
+        }
+
+        if (!isEditMode && rowQuantity <= 0) {
           errors.push(`${rowLabel}: entrez une quantite superieure a 0.`);
           return;
         }
@@ -724,8 +740,9 @@ export function ProductForm({ mode = "create", productId = null }) {
 
       {isLoadingProduct ? (
         <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_2px_10px_rgba(15,23,42,0.05)]">
-          <div className="text-base font-semibold text-[#081c16]">
-            {loadingTitle}
+          <div className="flex items-center gap-3 text-base font-semibold text-[#081c16]">
+            <Spinner size="md" className="text-[#081c16]" />
+            <span>{loadingTitle}</span>
           </div>
           <p className="mt-2 text-sm leading-6 text-slate-500">
             {loadingDescription}
@@ -763,14 +780,20 @@ export function ProductForm({ mode = "create", productId = null }) {
                 <Select value={category} onValueChange={setCategory}>
                   <SelectTrigger
                     id="product-category"
-                    className={adminSelectTriggerClass}>
-                    <SelectValue
-                      placeholder={
-                        categoriesLoading
-                          ? "Chargement des categories..."
-                          : "Selectionner une categorie"
-                      }
-                    />
+                    disabled={categoriesLoading}
+                    className={`${adminSelectTriggerClass} ${categoriesLoading ? "[&_svg:last-child]:hidden" : ""}`}>
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <SelectValue
+                        placeholder={
+                          categoriesLoading
+                            ? "Chargement des categories..."
+                            : "Selectionner une categorie"
+                        }
+                      />
+                      {categoriesLoading ? (
+                        <Spinner size="sm" className="text-[#616669]" />
+                      ) : null}
+                    </div>
                   </SelectTrigger>
 
                   <SelectContent
@@ -864,7 +887,7 @@ export function ProductForm({ mode = "create", productId = null }) {
 
             <div className="grid gap-3">
               <Label htmlFor="product-quantity" className={adminLabelClass}>
-                Quantite totale
+                {quantityLabel}
               </Label>
               <Input
                 id="product-quantity"
@@ -879,8 +902,7 @@ export function ProductForm({ mode = "create", productId = null }) {
                 className={adminInputClass}
               />
               <p className="text-xs leading-5 text-slate-500">
-                Commencez par le total, puis detaillez les couleurs et les
-                tailles juste en dessous.
+                {quantityHelpText}
               </p>
             </div>
           </div>
@@ -987,7 +1009,7 @@ export function ProductForm({ mode = "create", productId = null }) {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-2xl border border-white bg-white p-4">
                     <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500">
-                      Quantite totale
+                      {quantityLabel}
                     </p>
                     <p className="mt-2 text-2xl font-bold text-[#081c16]">
                       {hasDefinedTotalQuantity ? totalQuantityValue : "--"}
@@ -996,7 +1018,7 @@ export function ProductForm({ mode = "create", productId = null }) {
 
                   <div className="rounded-2xl border border-white bg-white p-4">
                     <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500">
-                      Detail stock
+                      {detailQuantityLabel}
                     </p>
                     <p className="mt-2 text-2xl font-bold text-[#081c16]">
                       {totalDetailedQuantity}
@@ -1005,7 +1027,7 @@ export function ProductForm({ mode = "create", productId = null }) {
 
                   <div className="rounded-2xl border border-white bg-white p-4">
                     <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500">
-                      Stock attribue
+                      {allocatedQuantityLabel}
                     </p>
                     <p className="mt-2 text-2xl font-bold text-[#081c16]">
                       {totalAllocatedQuantity}
@@ -1212,7 +1234,14 @@ export function ProductForm({ mode = "create", productId = null }) {
                   onClick={handleSaveProduct}
                   disabled={isSubmitting}
                   className="h-11 rounded-xl bg-[#081c16] px-5 text-sm font-semibold text-white hover:bg-[#081c16]/90 disabled:opacity-60">
-                  {isSubmitting ? submitPending : submitIdle}
+                  {isSubmitting ? (
+                    <span className="flex items-center gap-2">
+                      <Spinner size="sm" className="text-white" />
+                      <span>{submitPending}</span>
+                    </span>
+                  ) : (
+                    submitIdle
+                  )}
                 </Button>
               </div>
             </div>

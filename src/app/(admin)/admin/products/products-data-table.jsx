@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 function formatPrice(value) {
@@ -43,12 +44,36 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatDateTime(value) {
+  if (!value) return "--";
+
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
 function getStatusClassName(status) {
   switch (status) {
     case "Active":
       return "border-emerald-200 bg-emerald-50 text-emerald-700";
     case "Inactive":
       return "border-slate-200 bg-slate-100 text-slate-500";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+}
+
+function getStockClassName(stockState) {
+  switch (stockState) {
+    case "In stock":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "Out of stock":
+      return "border-rose-200 bg-rose-50 text-rose-700";
     default:
       return "border-slate-200 bg-slate-50 text-slate-600";
   }
@@ -74,7 +99,11 @@ function ProductActionsCell({
           size="icon-sm"
           disabled={isAnyActionPending}
           className="cursor-pointer text-slate-500 hover:bg-slate-100 hover:text-[#081c16]">
-          <EllipsisVerticalIcon />
+          {isMutatingThisProduct ? (
+            <Spinner size="sm" className="text-current" />
+          ) : (
+            <EllipsisVerticalIcon />
+          )}
           <span className="sr-only">Open actions</span>
         </Button>
       </DropdownMenuTrigger>
@@ -87,6 +116,14 @@ function ProductActionsCell({
           asChild
           className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50 focus:text-[#081c16] data-[highlighted]:bg-slate-50 data-[highlighted]:text-[#081c16]">
           <Link href={`/admin/products/${product.id}/edit`}>Modifier</Link>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          asChild
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50 focus:text-[#081c16] data-[highlighted]:bg-slate-50 data-[highlighted]:text-[#081c16]">
+          <Link href={`/admin/products/${product.id}/add-stock`}>
+            Ajouter du stock
+          </Link>
         </DropdownMenuItem>
 
         <DropdownMenuItem
@@ -157,6 +194,65 @@ export function ProductsDataTable({
       renderCell: (product) => product.category || "--",
     },
     {
+      id: "colors",
+      header: "Colors",
+      renderCell: (product) =>
+        product.colorNames?.length ? (
+          <div className="flex min-w-[220px] flex-wrap gap-1.5">
+            {product.colorNames.map((color) => (
+              <Badge
+                key={`${product.id}-${color}`}
+                variant="outline"
+                className="h-6 rounded-full border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-700">
+                {color}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <span className="text-slate-400">--</span>
+        ),
+    },
+    {
+      id: "assignedOwners",
+      header: "Assigned to",
+      renderCell: (product) =>
+        product.assignedOwners?.length ? (
+          <div className="flex min-w-[220px] flex-wrap gap-1.5">
+            {product.assignedOwners.map((owner) => (
+              <Badge
+                key={`${product.id}-${owner}`}
+                variant="outline"
+                className="h-6 rounded-full border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-700">
+                {owner}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <span className="text-slate-400">--</span>
+        ),
+    },
+    {
+      id: "stock",
+      header: () => <div className="text-center">Stock</div>,
+      renderCell: (product) => (
+        <div className="flex min-w-[150px] items-center justify-center gap-2">
+          <span className="text-base font-semibold text-[#081c16]">
+            {product.availableQuantity ?? 0}
+          </span>
+          <Badge
+            variant="outline"
+            className={cn(
+              "h-6 rounded-full px-2.5 text-xs font-medium",
+              getStockClassName(product.stockState),
+            )}>
+            {product.stockState}
+          </Badge>
+        </div>
+      ),
+      headerClassName: "text-center",
+      cellClassName: "text-center",
+    },
+    {
       id: "price",
       header: () => <div className="text-right">Price</div>,
       renderCell: (product) => (
@@ -190,6 +286,11 @@ export function ProductsDataTable({
       id: "createdAt",
       header: "Created at",
       renderCell: (product) => formatDate(product.createdAt),
+    },
+    {
+      id: "lastRestockAt",
+      header: "Last restock",
+      renderCell: (product) => formatDateTime(product.lastRestockAt),
     },
     {
       id: "actions",
@@ -226,8 +327,10 @@ export function ProductsDataTable({
   const endRow = hasRows ? Math.min(startIndex + PAGE_SIZE, data.length) : 0;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <Table className="min-w-[980px]">
+    <div
+      aria-busy={isLoading || activeAction !== null}
+      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <Table className="min-w-[1520px]">
         <TableHeader className="bg-white">
           <TableRow className="border-slate-200 bg-transparent hover:bg-transparent">
             {columns.map((column) => (
@@ -249,8 +352,11 @@ export function ProductsDataTable({
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center">
-                Loading products...
+              <TableCell colSpan={columns.length} className="h-28 px-4 text-center">
+                <div className="flex items-center justify-center gap-3 text-sm text-slate-500">
+                  <Spinner size="md" className="text-[#081c16]" />
+                  <span>Loading products...</span>
+                </div>
               </TableCell>
             </TableRow>
           ) : visibleRows.length ? (
@@ -284,7 +390,14 @@ export function ProductsDataTable({
 
       <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-500">
-          Showing {startRow} to {endRow} of {data.length} products
+          {isLoading ? (
+            <span className="flex items-center gap-2">
+              <Spinner size="sm" className="text-[#616669]" />
+              <span>Loading product count...</span>
+            </span>
+          ) : (
+            `Showing ${startRow} to ${endRow} of ${data.length} products`
+          )}
         </p>
 
         <div className="flex items-center gap-2">

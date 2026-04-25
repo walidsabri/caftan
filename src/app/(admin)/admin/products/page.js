@@ -25,6 +25,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
+import { ProductStockTransferDialog } from "./product-stock-transfer-dialog";
 import { ProductsDataTable } from "./products-data-table";
 
 function compareLabels(firstLabel = "", secondLabel = "") {
@@ -39,6 +40,7 @@ export default function ProductsPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [activeAction, setActiveAction] = React.useState(null);
   const [pendingDeleteProduct, setPendingDeleteProduct] = React.useState(null);
+  const [pendingTransferProduct, setPendingTransferProduct] = React.useState(null);
   const [pageError, setPageError] = React.useState("");
   const [pageSuccess, setPageSuccess] = React.useState("");
 
@@ -74,37 +76,52 @@ export default function ProductsPage() {
     new Set(products.flatMap((product) => product.colorNames ?? [])),
   ).sort(compareLabels);
 
-  React.useEffect(() => {
-    async function fetchProducts() {
-      setIsLoading(true);
+  const loadProducts = React.useCallback(async (options = {}) => {
+    const preserveMessages = Boolean(options?.preserveMessages);
+
+    setIsLoading(true);
+
+    if (!preserveMessages) {
       setPageError("");
       setPageSuccess("");
-
-      try {
-        const response = await fetch("/api/admin/products", {
-          cache: "no-store",
-        });
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result?.error || "Failed to load products.");
-        }
-
-        setProducts(result.products || []);
-        setAssigneeOptions(result.assigneeOptions || []);
-        setSizeOptions(result.sizeOptions || []);
-        setCategoryOptions(result.categoryOptions || []);
-      } catch (error) {
-        setPageError(
-          error instanceof Error ? error.message : "Failed to load products.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
     }
 
-    fetchProducts();
+    try {
+      const response = await fetch("/api/admin/products", {
+        cache: "no-store",
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.error || "Failed to load products.");
+      }
+
+      setProducts(result.products || []);
+      setAssigneeOptions(result.assigneeOptions || []);
+      setSizeOptions(result.sizeOptions || []);
+      setCategoryOptions(result.categoryOptions || []);
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to load products.";
+
+      setPageError(errorMessage);
+
+      return {
+        success: false,
+        error: errorMessage,
+      };
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  React.useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
 
   React.useEffect(() => {
     if (
@@ -218,6 +235,43 @@ export default function ProductsPage() {
 
   function handleDeleteProduct(product) {
     setPendingDeleteProduct(product);
+  }
+
+  function handleTransferDialogOpenChange(nextOpen) {
+    if (!nextOpen) {
+      setPendingTransferProduct(null);
+    }
+  }
+
+  function handleOpenTransferDialog(product) {
+    setPendingTransferProduct({
+      id: product.id,
+      name: product.name,
+    });
+    setPageError("");
+    setPageSuccess("");
+  }
+
+  function handleTransferPendingChange(isPending, productId) {
+    setActiveAction(
+      isPending
+        ? {
+            productId,
+            type: "transfer-stock",
+          }
+        : null,
+    );
+  }
+
+  async function handleTransferSuccess(message) {
+    const loadResult = await loadProducts({
+      preserveMessages: true,
+    });
+
+    if (loadResult.success) {
+      setPageError("");
+      setPageSuccess(message);
+    }
   }
 
   async function handleConfirmDeleteProduct() {
@@ -606,8 +660,17 @@ export default function ProductsPage() {
         data={filteredProducts}
         isLoading={isLoading}
         activeAction={activeAction}
+        onOpenTransferDialog={handleOpenTransferDialog}
         onToggleProductStatus={handleToggleProductStatus}
         onDeleteProduct={handleDeleteProduct}
+      />
+
+      <ProductStockTransferDialog
+        open={Boolean(pendingTransferProduct)}
+        product={pendingTransferProduct}
+        onOpenChange={handleTransferDialogOpenChange}
+        onTransferPendingChange={handleTransferPendingChange}
+        onTransferSuccess={handleTransferSuccess}
       />
 
       <AlertDialog

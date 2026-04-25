@@ -84,6 +84,7 @@ const PAGE_SIZE = 10;
 function ProductActionsCell({
   product,
   activeAction,
+  onOpenTransferDialog,
   onToggleProductStatus,
   onDeleteProduct,
 }) {
@@ -128,6 +129,13 @@ function ProductActionsCell({
 
         <DropdownMenuItem
           disabled={isAnyActionPending}
+          onSelect={() => onOpenTransferDialog(product)}
+          className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50">
+          Transferer le stock
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          disabled={isAnyActionPending}
           onSelect={() => onToggleProductStatus(product)}
           className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#081c16] focus:bg-slate-50">
           {product.status === "Active" ? "Desactiver" : "Activer"}
@@ -151,6 +159,7 @@ export function ProductsDataTable({
   data = [],
   isLoading = false,
   activeAction = null,
+  onOpenTransferDialog,
   onToggleProductStatus,
   onDeleteProduct,
 }) {
@@ -300,6 +309,7 @@ export function ProductsDataTable({
           <ProductActionsCell
             product={product}
             activeAction={activeAction}
+            onOpenTransferDialog={onOpenTransferDialog}
             onToggleProductStatus={onToggleProductStatus}
             onDeleteProduct={onDeleteProduct}
           />

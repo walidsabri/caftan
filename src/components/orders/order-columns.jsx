@@ -88,6 +88,18 @@ export function getOrderStatusLabel(status) {
   );
 }
 
+function StatusBadge({ value }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-7 items-center rounded-full border px-3 text-xs font-semibold",
+        getStatusClasses(value),
+      )}>
+      {getOrderStatusLabel(value)}
+    </span>
+  );
+}
+
 function StatusSelect({ value, onValueChange, disabled = false, isPending = false }) {
   return (
     <DropdownMenu>
@@ -240,6 +252,7 @@ export function getOrderColumns({
   onStatusChange,
   onOwnerChange,
   isDispatchMode = false,
+  isReadOnly = false,
   getIsStatusPending = () => false,
   getIsOwnerPending = () => false,
 }) {
@@ -359,11 +372,15 @@ export function getOrderColumns({
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => (
-        <StatusSelect
-          value={row.original.status}
-          isPending={getIsStatusPending(row.original.id)}
-          onValueChange={(value) => onStatusChange(row.original.id, value)}
-        />
+        isReadOnly ? (
+          <StatusBadge value={row.original.status} />
+        ) : (
+          <StatusSelect
+            value={row.original.status}
+            isPending={getIsStatusPending(row.original.id)}
+            onValueChange={(value) => onStatusChange(row.original.id, value)}
+          />
+        )
       ),
       enableSorting: false,
       meta: {
@@ -408,16 +425,28 @@ export function getOrderColumns({
           <div className="flex min-w-[180px] flex-col gap-2">
             {orderItems.map((orderItem) => (
               <div key={orderItem.id} className="min-h-10">
-                <AssigneeSelect
-                  value={orderItem.owner}
-                  displayValue={orderItem.owner || orderItem.suggestedOwner}
-                  assigneeOptions={orderItem.ownerOptions}
-                  disabled={isDispatchMode}
-                  isPending={getIsOwnerPending(orderItem.id)}
-                  onValueChange={(value) =>
-                    onOwnerChange(row.original.id, orderItem.id, value)
-                  }
-                />
+                {isReadOnly ? (
+                  <div className="flex min-h-10 items-center">
+                    <span
+                      className={cn(
+                        "text-sm font-normal",
+                        orderItem.owner ? "text-[#081c16]" : "text-[#616669]",
+                      )}>
+                      {getAssigneeLabel(orderItem.owner)}
+                    </span>
+                  </div>
+                ) : (
+                  <AssigneeSelect
+                    value={orderItem.owner}
+                    displayValue={orderItem.owner || orderItem.suggestedOwner}
+                    assigneeOptions={orderItem.ownerOptions}
+                    disabled={isDispatchMode}
+                    isPending={getIsOwnerPending(orderItem.id)}
+                    onValueChange={(value) =>
+                      onOwnerChange(row.original.id, orderItem.id, value)
+                    }
+                  />
+                )}
               </div>
             ))}
           </div>

@@ -152,6 +152,7 @@ export function OrdersDataTable({
   selectedDeliveryType = "all",
   dateRange,
   isDispatchMode = false,
+  isReadOnly = false,
   dispatchAccount = "all",
   dispatchSubmissionId = 0,
   assigneeOptions = [],
@@ -270,6 +271,7 @@ export function OrdersDataTable({
       onStatusChange: handleStatusChange,
       onOwnerChange: handleOwnerChange,
       isDispatchMode,
+      isReadOnly,
       getIsStatusPending: (orderId) => isMutationPending(`status:${orderId}`),
       getIsOwnerPending: (orderItemId) =>
         isMutationPending(`owner:${orderItemId}`),
@@ -312,7 +314,13 @@ export function OrdersDataTable({
       },
       ...baseColumns,
     ];
-  }, [handleOwnerChange, handleStatusChange, isDispatchMode, isMutationPending]);
+  }, [
+    handleOwnerChange,
+    handleStatusChange,
+    isDispatchMode,
+    isMutationPending,
+    isReadOnly,
+  ]);
 
   React.useEffect(() => {
     setTableData(data ?? []);

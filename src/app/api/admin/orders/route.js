@@ -200,7 +200,12 @@ function normalizeOrderItems(items) {
   const itemsByVariantId = new Map();
 
   for (const item of items) {
-    const variantId = normalizeText(item?.variantId);
+    const variantId = normalizeText(
+      item?.variantId ??
+        item?.variant_id ??
+        item?.selectedVariantId ??
+        item?.id,
+    );
     const quantity = normalizePositiveInteger(item?.quantity);
     const ownerName = normalizeText(item?.ownerName);
 
@@ -348,12 +353,7 @@ async function fetchVariantStateById(supabase, variantIds) {
   );
 }
 
-async function assignOrderItems({
-  supabase,
-  adminId,
-  orderId,
-  items,
-}) {
+async function assignOrderItems({ supabase, adminId, orderId, items }) {
   const selectedAssignments = items.filter((item) => item.ownerName);
 
   if (!selectedAssignments.length) {
@@ -363,6 +363,7 @@ async function assignOrderItems({
   const uniqueOwnerNames = Array.from(
     new Set(selectedAssignments.map((item) => item.ownerName)),
   );
+
   const [createdOrderItemsResponse, stockOwnersResponse] = await Promise.all([
     supabase
       .from("order_items")
@@ -389,12 +390,14 @@ async function assignOrderItems({
       orderItem,
     ]),
   );
+
   const stockOwnerIdByName = new Map(
     (stockOwnersResponse.data ?? []).map((stockOwner) => [
       stockOwner.name,
       stockOwner.id,
     ]),
   );
+
   const warnings = [];
 
   for (const item of selectedAssignments) {
@@ -540,6 +543,7 @@ export async function POST(request) {
       wilayaCode,
       commune,
     });
+
     const shippingFee = getShippingFeeForMethod(
       shippingResolution.rates,
       shippingMethod,
@@ -587,6 +591,27 @@ export async function POST(request) {
       return NextResponse.json(
         { error: "La commande a ete creee sans retour exploitable." },
         { status: 500 },
+      );
+    }
+
+    const { error: updateTerritoryError } = await supabase
+      .from("orders")
+      .update({
+        zr_city_territory_id:
+          shippingResolution.zrAddress?.cityTerritoryId ?? null,
+        zr_district_territory_id:
+          shippingResolution.zrAddress?.districtTerritoryId ?? null,
+      })
+      .eq("id", order.order_id);
+
+    if (updateTerritoryError) {
+      return NextResponse.json(
+        {
+          error:
+            updateTerritoryError.message ||
+            "La commande a ete creee, mais les informations ZR n'ont pas ete enregistrees.",
+        },
+        { status: 400 },
       );
     }
 

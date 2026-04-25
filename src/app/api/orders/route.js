@@ -25,14 +25,17 @@ function normalizeItems(items) {
 
   return items
     .map((item) => ({
-      variantId: normalizeText(item?.variantId),
+      variantId: normalizeText(
+        item?.variantId ??
+          item?.variant_id ??
+          item?.selectedVariantId ??
+          item?.id,
+      ),
       quantity: Number(item?.quantity),
     }))
     .filter(
       (item) =>
-        item.variantId &&
-        Number.isInteger(item.quantity) &&
-        item.quantity > 0,
+        item.variantId && Number.isInteger(item.quantity) && item.quantity > 0,
     );
 }
 
@@ -90,7 +93,7 @@ function validateOrderPayload(payload) {
   ) {
     return {
       error:
-        "Votre panier contient un article invalide. Veuillez actualiser la page et reessayer.",
+        "Votre panier contient un article invalide. Veuillez supprimer l'article du panier puis l'ajouter de nouveau.",
     };
   }
 
@@ -135,6 +138,7 @@ export async function POST(request) {
       wilayaCode,
       commune,
     });
+
     const shippingFee = getShippingFeeForMethod(
       shippingResolution.rates,
       shippingMethod,
@@ -151,6 +155,7 @@ export async function POST(request) {
     }
 
     const supabase = createStorefrontClient();
+
     const { data, error } = await supabase.rpc("create_storefront_order", {
       customer_name_input: fullName,
       customer_phone_input: phone,
@@ -176,10 +181,27 @@ export async function POST(request) {
 
     const order = Array.isArray(data) ? data[0] : data;
 
-    if (!order?.order_number) {
+    if (!order?.order_id || !order?.order_number) {
       return NextResponse.json(
         { error: "La commande a ete creee sans numero de suivi exploitable." },
         { status: 500 },
+      );
+    }
+
+    const { error: updateTerritoryError } = await supabase
+      .from("orders")
+      .update({
+        zr_city_territory_id:
+          shippingResolution.zrAddress?.cityTerritoryId ?? null,
+        zr_district_territory_id:
+          shippingResolution.zrAddress?.districtTerritoryId ?? null,
+      })
+      .eq("id", order.order_id);
+
+    if (updateTerritoryError) {
+      console.warn(
+        "Failed to persist ZR territory ids for storefront order:",
+        updateTerritoryError.message,
       );
     }
 

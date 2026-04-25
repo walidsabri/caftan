@@ -1,15 +1,18 @@
-import { zrConfig, validateZrConfig } from "@/lib/zr/config";
+import { getZrAccount, validateZrConfig, zrConfig } from "@/lib/zr/config";
 
 export async function zrRequest(path, options = {}) {
-  validateZrConfig();
+  const accountKey = options.accountKey || "hanane";
 
+  validateZrConfig(accountKey);
+
+  const account = getZrAccount(accountKey);
   const url = `${zrConfig.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 
   const response = await fetch(url, {
     method: options.method || "GET",
     headers: {
-      "X-Api-Key": zrConfig.apiKey,
-      "X-Tenant": zrConfig.tenantId,
+      "X-Api-Key": account.apiKey,
+      "X-Tenant": account.tenantId,
       "Content-Type": "application/json",
       Accept: "application/json",
       ...(options.headers || {}),
@@ -27,8 +30,17 @@ export async function zrRequest(path, options = {}) {
   }
 
   if (!response.ok) {
+    const validationErrors = Array.isArray(data?.errors)
+      ? data.errors
+          .map((error) => error.description)
+          .filter(Boolean)
+          .join(" ")
+      : "";
+
     throw new Error(
-      data?.message ||
+      validationErrors ||
+        data?.detail ||
+        data?.message ||
         data?.error ||
         `ZR request failed with status ${response.status}`,
     );

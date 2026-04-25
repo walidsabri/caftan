@@ -109,14 +109,14 @@ export default function ProductDetailsView({
       return;
     }
 
-    if (!selectedVariant || !selectedVariant.inStock) {
+    if (!selectedVariant || !selectedVariant.id || !selectedVariant.inStock) {
       setSizeError(
         "Veuillez choisir une taille disponible avant d'ajouter au panier.",
       );
       return;
     }
 
-    addItem({
+    const nextCartItem = {
       variantId: selectedVariant.id,
       productId: product.id,
       slug: product.slug,
@@ -125,9 +125,11 @@ export default function ProductDetailsView({
       price: product.price,
       image: typeof currentImage === "string" ? currentImage : currentImage.src,
       size: String(selectedVariant.sizeName),
-      color: selectedColor,
+      color: String(selectedVariant.colorName),
       quantity: 1,
-    });
+    };
+
+    addItem(nextCartItem);
 
     router.push("/cart");
   };

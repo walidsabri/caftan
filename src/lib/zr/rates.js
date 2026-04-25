@@ -20,6 +20,52 @@ function getPriceByDeliveryType(deliveryPrices, deliveryType) {
   return match?.discountedPrice ?? match?.price ?? null;
 }
 
+function findWilayaTerritory({ rates, wilaya, wilayaCode }) {
+  const normalizedWilaya = normalizeText(wilaya);
+
+  if (wilayaCode) {
+    const matchByCode = rates.find(
+      (item) =>
+        item?.toTerritoryLevel === "wilaya" &&
+        String(item?.toTerritoryCode ?? "") === String(wilayaCode),
+    );
+
+    if (matchByCode) {
+      return matchByCode;
+    }
+  }
+
+  if (wilaya) {
+    const matchByName = rates.find(
+      (item) =>
+        item?.toTerritoryLevel === "wilaya" &&
+        normalizeText(item?.toTerritoryName) === normalizedWilaya,
+    );
+
+    if (matchByName) {
+      return matchByName;
+    }
+  }
+
+  return null;
+}
+
+function findCommuneTerritory({ rates, commune }) {
+  const normalizedCommune = normalizeText(commune);
+
+  if (!commune) {
+    return null;
+  }
+
+  return (
+    rates.find(
+      (item) =>
+        item?.toTerritoryLevel === "commune" &&
+        normalizeText(item?.toTerritoryName) === normalizedCommune,
+    ) ?? null
+  );
+}
+
 export function getShippingFeeForMethod(rates, shippingMethod) {
   if (shippingMethod === "home") {
     return rates?.home ?? null;
@@ -39,34 +85,11 @@ export async function resolveShippingRates({ wilaya, commune, wilayaCode }) {
 
   const payload = await getAllDeliveryRates();
   const rates = Array.isArray(payload?.rates) ? payload.rates : [];
-  const normalizedWilaya = normalizeText(wilaya);
-  const normalizedCommune = normalizeText(commune);
 
-  let matchedTerritory = null;
+  const communeTerritory = findCommuneTerritory({ rates, commune });
+  const wilayaTerritory = findWilayaTerritory({ rates, wilaya, wilayaCode });
 
-  if (commune) {
-    matchedTerritory = rates.find(
-      (item) =>
-        item?.toTerritoryLevel === "commune" &&
-        normalizeText(item?.toTerritoryName) === normalizedCommune,
-    );
-  }
-
-  if (!matchedTerritory && wilayaCode) {
-    matchedTerritory = rates.find(
-      (item) =>
-        item?.toTerritoryLevel === "wilaya" &&
-        String(item?.toTerritoryCode ?? "") === String(wilayaCode),
-    );
-  }
-
-  if (!matchedTerritory && wilaya) {
-    matchedTerritory = rates.find(
-      (item) =>
-        item?.toTerritoryLevel === "wilaya" &&
-        normalizeText(item?.toTerritoryName) === normalizedWilaya,
-    );
-  }
+  const matchedTerritory = communeTerritory ?? wilayaTerritory;
 
   if (!matchedTerritory) {
     throw new Error("No shipping price found for this location.");
@@ -92,6 +115,10 @@ export async function resolveShippingRates({ wilaya, commune, wilayaCode }) {
       name: matchedTerritory.toTerritoryName,
       nameArabic: matchedTerritory.toTerritoryNameArabic ?? null,
       level: matchedTerritory.toTerritoryLevel,
+    },
+    zrAddress: {
+      cityTerritoryId: wilayaTerritory?.toTerritoryId ?? null,
+      districtTerritoryId: communeTerritory?.toTerritoryId ?? null,
     },
     rates: {
       home: homePrice,

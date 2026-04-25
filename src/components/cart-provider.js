@@ -10,6 +10,9 @@ const noopSubscribe = () => () => {};
 let cartSnapshot = EMPTY_CART;
 let hasLoadedSnapshot = false;
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function parseStoredCart(storedCart) {
   if (!storedCart) {
     return EMPTY_CART;
@@ -18,7 +21,17 @@ function parseStoredCart(storedCart) {
   try {
     const parsedCart = JSON.parse(storedCart);
 
-    return Array.isArray(parsedCart) ? parsedCart : EMPTY_CART;
+    if (!Array.isArray(parsedCart)) {
+      return EMPTY_CART;
+    }
+
+    // Remove old/invalid cart items that do not have a real variant UUID.
+    return parsedCart.filter(
+      (item) =>
+        typeof item?.variantId === "string" &&
+        UUID_PATTERN.test(item.variantId) &&
+        item.quantity > 0,
+    );
   } catch {
     return EMPTY_CART;
   }
@@ -33,6 +46,10 @@ function loadCartSnapshot() {
     cartSnapshot = parseStoredCart(
       window.localStorage.getItem(CART_STORAGE_KEY),
     );
+
+    // Clean localStorage automatically if old invalid items were removed.
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartSnapshot));
+
     hasLoadedSnapshot = true;
   }
 
@@ -87,17 +104,35 @@ function writeStoredCart(items) {
   notifyCartListeners();
 }
 
-function createCartItemId({ slug, size, color }) {
+function createCartItemId({ variantId, slug, size, color }) {
+  if (variantId) {
+    return `${variantId}`;
+  }
+
   return `${slug}::${size}::${color}`;
 }
 
 export function CartProvider({ children }) {
   const items = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const hasHydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const hasHydrated = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
 
   const addItem = (item) => {
+    const variantId = String(item?.variantId || "").trim();
+
+    if (!UUID_PATTERN.test(variantId)) {
+      console.error("Cannot add item to cart without a valid variantId:", item);
+      return;
+    }
+
     const nextQuantity = Math.max(1, item.quantity ?? 1);
-    const cartItemId = createCartItemId(item);
+    const cartItemId = createCartItemId({
+      ...item,
+      variantId,
+    });
     const currentItems = getSnapshot();
     const existingItem = currentItems.find(
       (currentItem) => currentItem.cartItemId === cartItemId,
@@ -121,7 +156,7 @@ export function CartProvider({ children }) {
       ...currentItems,
       {
         cartItemId,
-        variantId: item.variantId,
+        variantId,
         productId: item.productId,
         slug: item.slug,
         categorySlug: item.categorySlug,
@@ -162,6 +197,7 @@ export function CartProvider({ children }) {
     (sum, item) => sum + Number(item.quantity || 0),
     0,
   );
+
   const subtotal = items.reduce(
     (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
     0,
